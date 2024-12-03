@@ -108,7 +108,7 @@ for i in range(len(R)):
     file_cluster_bam_sorted = file_cluster_bam[0:-4]+'_sorted.bam'
     os.system(f"samtools sort {file_cluster_bam} -o {file_cluster_bam_sorted}")
     os.system(f"samtools index {file_cluster_bam_sorted}")
-    os.system(f"python ./src/count_frequency.py {file_cluster_bam_sorted} {file_path}/clusters/cluster_{i}_acgt.txt")
+    os.system(f"python /home/lzh8485/haplotypes_workflow/RVHaplo/count_frequency.py {file_cluster_bam_sorted} {file_path}/clusters/cluster_{i}_acgt.txt")
     seq_temp = []
     file_acgt = file_path+"/clusters/cluster_"+str(i) + '_acgt.txt'
     df = pd.read_csv(file_acgt, sep='\t')

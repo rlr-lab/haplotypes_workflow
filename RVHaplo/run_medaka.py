@@ -9,6 +9,8 @@ file_prefix = sys.argv[2]
 flag = sys.argv[3]
 
 if flag == '1':
+    os.system(f"rm -rf {file_path}/medaka/medaka0")
+    os.system(f"mkdir {file_path}/medaka/medaka0")
     # os.system(f'medaka_consensus -i {file_path}/medaka/fastx/cluster.fastq -d {file_path}/medaka/fastx/consensus.fasta -o {file_path}/medaka/medaka0')
     os.system(f'mini_align -i {file_path}/medaka/fastx/cluster.fastq -r {file_path}/medaka/fastx/consensus.fasta -m -t 4 -p {file_path}/medaka/reads')
     os.system(f'medaka inference {file_path}/medaka/reads.bam {file_path}/medaka/contig.hdf --threads 2 --model r1041_e82_400bps_hac_v4.3.0')

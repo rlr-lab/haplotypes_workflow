@@ -145,11 +145,8 @@ def hierarchical_weight(clus,seq_mat,snv_base,major_base,thres = 0.8,depth = 5):
         seqs.append([temp1,temp2])
         node_se.append(temp3)
     node_se = np.array(node_se)
-    if node_se.ndim == 1:
-        mat = 0
-    else:
-        mat = contig_weight(seqs,node_se)
-        mat = mat*(mat>=thres)
+    mat = contig_weight(seqs,node_se)
+    mat = mat*(mat>=thres)
     return mat
 
 def hierarchical_clustering(clus,seq_mat,snv_base,major_base, thres = 0.8,depth = 5):

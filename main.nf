@@ -1,8 +1,8 @@
-params.barcodes = "/projects/p32511/F2_bams/barcodes.txt"
-params.fastq_dir = "/projects/p32511/F2_bams"
-params.regions_bed = "/home/lzh8485/haplotypes_workflow/SIVregions.bed"
-params.reference = "/home/lzh8485/haplotypes_workflow/SIVMac239FullGenome.fas"
-params.outdir = "/projects/p32511/F2_bams/nf-results"
+params.barcodes = "/projects/b1042/LorenzoRedondoLab/11272024_EPG_PBMCs_Tissue/NanoporeBarcodesFormat.csv"
+params.fastq_dir = "/projects/b1042/LorenzoRedondoLab/11272024_EPG_PBMCs_Tissue/11272024_EPG_PBMCs_Tissue/20241127_1916_X4_FAZ62876_9d2b31c7/fastq_pass"
+params.regions_bed = "/home/lzh8485/haplotypes_workflow/HXB2regions.bed"
+params.reference = "/home/lzh8485/haplotypes_workflow/HXB2Ref_FullGenome.fas"
+params.outdir = "/projects/b1042/LorenzoRedondoLab/11272024_EPG_PBMCs_Tissue/nf-results"
 
 process concatenateFastq {
     
@@ -11,17 +11,26 @@ process concatenateFastq {
     input:
     path fastq_dir
     tuple val(barcode), val(sample_id)
+    val outdir
+    errorStrategy 'retry'
 
     output:
-    path "concatenated.fastq.gz"
+    path "${sample_id}_concatenated.fastq.gz"
 
     shell:
     """
-    if [ -d "$fastq_dir/$barcode" ]; then
-        cat $fastq_dir/$barcode/*.fastq.gz > concatenated.fastq.gz
-    elif [ -f "$fastq_dir/${sample_id}.fastq.gz" ]; then
-        cat $fastq_dir/${sample_id}.fastq.gz > concatenated.fastq.gz
+    if [ ! -d $outdir]; then
+        mkdir $outdir
     fi
+    if [ ! -d $outdir/$sample_id ]; then
+        mkdir $outdir/$sample_id
+    fi
+    if [ -d $fastq_dir/$barcode ]; then
+        cat $fastq_dir/$barcode/*.fastq.gz > ${sample_id}_concatenated.fastq.gz
+    elif [ -f $fastq_dir/${sample_id}.fastq.gz ]; then
+        cat $fastq_dir/${sample_id}.fastq.gz > ${sample_id}_concatenated.fastq.gz
+    fi
+    cp ${sample_id}_concatenated.fastq.gz ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz
     """
 
 }
@@ -34,6 +43,7 @@ process getRegions {
     tuple val(barcode), val(sample_id)
     path regions_bed
     path fastq_dir
+    errorStrategy 'retry'
 
     output:
     env 'filter_pos'
@@ -50,6 +60,8 @@ process getRegions {
         filter_pos=\$(awk -v pat="Fragment_4" '\$4 ~ pat {print \$1 ":" \$2 "-" \$3}' $regions_bed)
     elif [ "$fastq_dir" == "F5_bams" ]; then
         filter_pos=\$(awk -v pat="Fragment_5" '\$4 ~ pat {print \$1 ":" \$2 "-" \$3}' $regions_bed)
+    else
+        filter_pos=\$(awk -v pat="Fragment_1" '\$4 ~ pat {print \$1 ":" \$2 "-" \$3}' $regions_bed)
     fi
     """
 
@@ -70,26 +82,20 @@ process firstConsensus {
 
     input:
     tuple val(barcode), val(sample_id)
-    path 'concatenated.fastq.gz'
+    path "${sample_id}_concatenated.fastq.gz"
     val filter_pos
     path reference
     path outdir
 
     output:
-    path 'firstConsensus.fasta'
+    path "${sample_id}_firstConsensus.fasta"
 
     shell:
     """
-    if [ ! -d "$outdir"]; then
-        mkdir $outdir
-    fi
-    if [ ! -d "$outdir/$sample_id" ]; then
-        mkdir $outdir/$sample_id
-    fi
-    mini_align -i concatenated.fastq.gz -r $reference -m -t 4 -p firstAlign
+    mini_align -i ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz -r $reference -m -t 4 -p firstAlign
     medaka inference firstAlign.bam $sample_id\.hdf --threads 2 --regions $filter_pos --model r1041_e82_400bps_hac_v4.3.0
-    medaka sequence ${sample_id}.hdf $reference $outdir/$sample_id/firstConsensus.fasta --threads 4
-    cp $outdir/$sample_id/firstConsensus.fasta firstConsensus.fasta
+    medaka sequence ${sample_id}.hdf $reference $outdir/$sample_id/${sample_id}_firstConsensus.fasta --threads 4 --no-fillgaps --regions $filter_pos
+    cp $outdir/$sample_id/${sample_id}_firstConsensus.fasta ${sample_id}_firstConsensus.fasta
     """
 }
 
@@ -107,17 +113,19 @@ process haplotypes {
 
     input:
     tuple val(barcode), val(sample_id)
-    path 'concatenated.fastq.gz'
-    path 'firstConsensus.fasta'
+    path "${sample_id}_concatenated.fastq.gz"
+    path "${sample_id}_firstConsensus.fasta"
     path outdir
 
     shell:
     """
-    if [ ! -f $outdir/$sample_id/rvhaplo_haplotypes.fasta ]; then    
-        minimap2 -ax map-ont firstConsensus.fasta concatenated.fastq.gz > realignment.sam;
-        RVHaploPath="/home/lzh8485/haplotypes_workflow/rvhaplo.sh";
-        . "\${RVHaploPath}" -i realignment.sam -r firstConsensus.fasta -o $outdir/$sample_id -t 8 -a 0.01 -sg 32;
-    fi
+    bioawk -c fastx '(length(\$seq)>1800) {print ">" \$name ORS \$seq}' ${sample_id}_concatenated.fastq.gz > ${sample_id}_filtered.fastq
+    mini_align -i ${sample_id}_filtered.fastq -r ${sample_id}_firstConsensus.fasta -m -t 4 -p secondAlign
+    medaka inference secondAlign.bam ${sample_id}.hdf --threads 2 --model r1041_e82_400bps_hac_v4.3.0
+    medaka sequence ${sample_id}.hdf ${sample_id}_firstConsensus.fasta $outdir/$sample_id/${sample_id}_realignment.fasta --threads 4
+    minimap2 -ax map-ont $outdir/$sample_id/${sample_id}_realignment.fasta ${sample_id}_filtered.fastq > ${sample_id}_RVHaploinput.sam
+    RVHaploPath="/home/lzh8485/haplotypes_workflow/rvhaplo.sh";
+    . "\${RVHaploPath}" -i ${sample_id}_RVHaploinput.sam -r $outdir/$sample_id/${sample_id}_realignment.fasta -o $outdir/$sample_id -p ${sample_id} -t 8 -a 0.01;
     """
 }
 
@@ -126,7 +134,7 @@ workflow {
         .fromPath(params.barcodes, checkIfExists: true, type: 'file')
         .splitCsv()
         .set {barcodes_ch}
-    concatenated = concatenateFastq(params.fastq_dir, barcodes_ch)
+    concatenated = concatenateFastq(params.fastq_dir, barcodes_ch, params.outdir)
     regions = getRegions(barcodes_ch, params.regions_bed, params.fastq_dir)
     firstCon = firstConsensus(barcodes_ch, concatenated, regions, params.reference, params.outdir)
     haplotypes(barcodes_ch, concatenated, firstCon, params.outdir)
