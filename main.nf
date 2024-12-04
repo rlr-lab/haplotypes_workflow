@@ -24,6 +24,9 @@ process concatenateFastq {
     fi
     if [ ! -d $outdir/$sample_id ]; then
         mkdir $outdir/$sample_id
+    elif [ d $outdir/$sample_id ]; then
+        rm -rf $outdir/$sample_id
+        mkdir $outdir/$sample_id
     fi
     if [ -d $fastq_dir/$barcode ]; then
         cat $fastq_dir/$barcode/*.fastq.gz > ${sample_id}_concatenated.fastq.gz
@@ -125,7 +128,7 @@ process haplotypes {
     medaka sequence ${sample_id}.hdf ${sample_id}_firstConsensus.fasta $outdir/$sample_id/${sample_id}_realignment.fasta --threads 4
     minimap2 -ax map-ont $outdir/$sample_id/${sample_id}_realignment.fasta ${sample_id}_filtered.fastq > ${sample_id}_RVHaploinput.sam
     RVHaploPath="/home/lzh8485/haplotypes_workflow/rvhaplo.sh";
-    . "\${RVHaploPath}" -i ${sample_id}_RVHaploinput.sam -r $outdir/$sample_id/${sample_id}_realignment.fasta -o $outdir/$sample_id -p ${sample_id} -t 8 -a 0.01;
+    . "\${RVHaploPath}" -i ${sample_id}_RVHaploinput.sam -r $outdir/$sample_id/${sample_id}_realignment.fasta -o $outdir/$sample_id -p ${sample_id} -t 8;
     """
 }
 
