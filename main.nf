@@ -3,6 +3,9 @@ params.fastq_dir = "/projects/b1042/LorenzoRedondoLab/11272024_EPG_PBMCs_Tissue/
 params.regions_bed = "/home/lzh8485/haplotypes_workflow/HXB2regions.bed"
 params.reference = "/home/lzh8485/haplotypes_workflow/HXB2Ref_FullGenome.fas"
 params.outdir = "/projects/b1042/LorenzoRedondoLab/11272024_EPG_PBMCs_Tissue/nf-results"
+// Match RV Haplo defaults but allow changing
+params.subgraphs = 1
+params.abundance = 0.005
 
 process concatenateFastq {
     
@@ -19,19 +22,19 @@ process concatenateFastq {
 
     shell:
     """
-    if [ ! -d $outdir]; then
-        mkdir $outdir
+    if [ ! -d $outdir ]; then
+        mkdir $outdir;
     fi
     if [ ! -d $outdir/$sample_id ]; then
-        mkdir $outdir/$sample_id
+        mkdir $outdir/$sample_id;
     elif [ d $outdir/$sample_id ]; then
-        rm -rf $outdir/$sample_id
-        mkdir $outdir/$sample_id
+        rm -rf $outdir/$sample_id;
+        mkdir $outdir/$sample_id;
     fi
     if [ -d $fastq_dir/$barcode ]; then
-        cat $fastq_dir/$barcode/*.fastq.gz > ${sample_id}_concatenated.fastq.gz
+        cat $fastq_dir/$barcode/*.fastq.gz > ${sample_id}_concatenated.fastq.gz;
     elif [ -f $fastq_dir/${sample_id}.fastq.gz ]; then
-        cat $fastq_dir/${sample_id}.fastq.gz > ${sample_id}_concatenated.fastq.gz
+        cat $fastq_dir/${sample_id}.fastq.gz > ${sample_id}_concatenated.fastq.gz;
     fi
     cp ${sample_id}_concatenated.fastq.gz ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz
     """
@@ -109,7 +112,7 @@ process haplotypes {
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 8
-    time = { 30.minute * task.attempt}
+    time = { 120.minute * task.attempt}
     memory = { 80.GB * task.attempt}
     errorStrategy 'retry'
     maxRetries 2
@@ -119,6 +122,8 @@ process haplotypes {
     path "${sample_id}_concatenated.fastq.gz"
     path "${sample_id}_firstConsensus.fasta"
     path outdir
+    val subgraphs
+    val abundance
 
     shell:
     """
@@ -128,7 +133,7 @@ process haplotypes {
     medaka sequence ${sample_id}.hdf ${sample_id}_firstConsensus.fasta $outdir/$sample_id/${sample_id}_realignment.fasta --threads 4
     minimap2 -ax map-ont $outdir/$sample_id/${sample_id}_realignment.fasta ${sample_id}_filtered.fastq > ${sample_id}_RVHaploinput.sam
     RVHaploPath="/home/lzh8485/haplotypes_workflow/rvhaplo.sh";
-    . "\${RVHaploPath}" -i ${sample_id}_RVHaploinput.sam -r $outdir/$sample_id/${sample_id}_realignment.fasta -o $outdir/$sample_id -p ${sample_id} -t 8;
+    . "\${RVHaploPath}" -i ${sample_id}_RVHaploinput.sam -r $outdir/$sample_id/${sample_id}_realignment.fasta -o $outdir/$sample_id -p ${sample_id} -t 8 -sg $subgraphs -a $abundance;
     """
 }
 
@@ -140,5 +145,5 @@ workflow {
     concatenated = concatenateFastq(params.fastq_dir, barcodes_ch, params.outdir)
     regions = getRegions(barcodes_ch, params.regions_bed, params.fastq_dir)
     firstCon = firstConsensus(barcodes_ch, concatenated, regions, params.reference, params.outdir)
-    haplotypes(barcodes_ch, concatenated, firstCon, params.outdir)
+    haplotypes(barcodes_ch, concatenated, firstCon, params.outdir, params.subgraphs, params.abundance)
 }
