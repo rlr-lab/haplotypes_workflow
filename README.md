@@ -4,6 +4,10 @@
 ```
 git clone https://github.com/rlr-lab/haplotypes_workflow.git
 ```
+Or, pull to edit files before pushing to share
+```
+git pull https://github.com/rlr-lab/haplotypes_workflow.git
+```
 ## Install conda environment
 ```
 mamba env create -f rvhaplo.yaml
