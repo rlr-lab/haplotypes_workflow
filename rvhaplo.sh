@@ -462,7 +462,7 @@ python ${workflow_path}/RVHaplo/two_binomial.py $error_rate $signi_level $file_a
 size="$(wc -l <"$file_snv")"
 #size="${size:0-1:1}"
 if (( $size != 0 ));then
-	python ${workflow_path}/RVHaplo/out_haplotypes.py $file_prefix"_clusters.pickle" $file_bam_sorted $file_path $file_acgt 1 $file_prefix"_consensus.fasta" $s_pos $e_pos
+	python ${workflow_path}/RVHaplo/out_haplotypes.py $file_prefix"_clusters.pickle" $file_bam_sorted $file_path $file_acgt 1 $file_prefix"_consensus.fasta" $s_pos $e_pos ${workflow_path}
 	python ${workflow_path}/RVHaplo/extract_reads.py $file_path $prefix 1
 	python ${workflow_path}/RVHaplo/run_medaka.py $file_path $prefix 1
 	exit 0
