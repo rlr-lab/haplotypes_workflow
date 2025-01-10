@@ -436,6 +436,7 @@ else
 	file_prefix=$file_path"/"$prefix
 fi
 
+workflow_path=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P)
 ##########  count nucleotide occurrence  ##########
 echo "count nucleotide occurrence"
 rm -rf $file_path"/alignment"
@@ -450,34 +451,34 @@ file_bam_sorted=$file_path"/alignment/"$prefix"_sorted.bam"
 samtools sort $file_bam -o $file_bam_sorted
 samtools index $file_bam_sorted
 file_acgt=$file_prefix"_acgt.txt"
-python /home/lzh8485/haplotypes_workflow/RVHaplo/count_frequency.py $file_bam_sorted $file_acgt
+python ${workflow_path}/RVHaplo/count_frequency.py $file_bam_sorted $file_acgt
 
 ########## two binomial tests  ##########
 echo "SNV detection"
 file_snv=$file_prefix"_snv.txt"
-python /home/lzh8485/haplotypes_workflow/RVHaplo/two_binomial.py $error_rate $signi_level $file_acgt $file_snv $thread $s_pos $e_pos
+python ${workflow_path}/RVHaplo/two_binomial.py $error_rate $signi_level $file_acgt $file_snv $thread $s_pos $e_pos
 
 ## judge number of detected SNV sites
 size="$(wc -l <"$file_snv")"
 #size="${size:0-1:1}"
 if (( $size != 0 ));then
-	python /home/lzh8485/haplotypes_workflow/RVHaplo/out_haplotypes.py $file_prefix"_clusters.pickle" $file_bam_sorted $file_path $file_acgt 1 $file_prefix"_consensus.fasta" $s_pos $e_pos
-	python /home/lzh8485/haplotypes_workflow/RVHaplo/extract_reads.py $file_path $prefix 1
-	python /home/lzh8485/haplotypes_workflow/RVHaplo/run_medaka.py $file_path $prefix 1
+	python ${workflow_path}/RVHaplo/out_haplotypes.py $file_prefix"_clusters.pickle" $file_bam_sorted $file_path $file_acgt 1 $file_prefix"_consensus.fasta" $s_pos $e_pos
+	python ${workflow_path}/RVHaplo/extract_reads.py $file_path $prefix 1
+	python ${workflow_path}/RVHaplo/run_medaka.py $file_path $prefix 1
 	exit 0
 fi
 
 ## maximum conditional probability and construct reads graph
-python /home/lzh8485/haplotypes_workflow/RVHaplo/mcp_read_graph.py $file_bam_sorted $file_snv $cond_pro $smallest_snv $num_read_1 $num_read_2 $gap \
+python ${workflow_path}/RVHaplo/mcp_read_graph.py $file_bam_sorted $file_snv $cond_pro $smallest_snv $num_read_1 $num_read_2 $gap \
 	$weight_read $ovlap_read $file_prefix $fre_snv $thread $only_snv $sub_graph
 
 ## judge number of detected SNV sites
 size="$(wc -l <"$file_snv")"
 #size="${size:0-1:1}"
 if (( $size != 0 ));then
-	python /home/lzh8485/haplotypes_workflow/RVHaplo/out_haplotypes.py $file_prefix"_clusters.pickle" $file_bam_sorted $file_path $file_acgt 1 $file_prefix"_consensus.fasta" $s_pos $e_pos
-	python /home/lzh8485/haplotypes_workflow/RVHaplo/extract_reads.py $file_path $prefix 1
-	python /home/lzh8485/haplotypes_workflow/RVHaplo/run_medaka.py $file_path $prefix 1
+	python ${workflow_path}/RVHaplo/out_haplotypes.py $file_prefix"_clusters.pickle" $file_bam_sorted $file_path $file_acgt 1 $file_prefix"_consensus.fasta" $s_pos $e_pos
+	python ${workflow_path}/RVHaplo/extract_reads.py $file_path $prefix 1
+	python ${workflow_path}/RVHaplo/run_medaka.py $file_path $prefix 1
 	exit 0
 fi
 
@@ -494,9 +495,9 @@ fi
 #size="${size:0-1:1}"
 if (( $size == 0 ));then
 	echo "Not enough reads with overlaps"
-	python /home/lzh8485/haplotypes_workflow/RVHaplo/out_haplotypes.py $file_prefix"_clusters.pickle" $file_bam_sorted $file_path $file_acgt 1 $file_prefix"_consensus.fasta" $s_pos $e_pos
-	python /home/lzh8485/haplotypes_workflow/RVHaplo/extract_reads.py $file_path $prefix 1
-	python /home/lzh8485/haplotypes_workflow/RVHaplo/run_medaka.py $file_path $prefix 1
+	python ${workflow_path}/RVHaplo/out_haplotypes.py $file_prefix"_clusters.pickle" $file_bam_sorted $file_path $file_acgt 1 $file_prefix"_consensus.fasta" $s_pos $e_pos
+	python ${workflow_path}/RVHaplo/extract_reads.py $file_path $prefix 1
+	python ${workflow_path}/RVHaplo/run_medaka.py $file_path $prefix 1
 	rm $file_prefix"_matrix.pickle"
 	# rm -rf $file_path"/medaka"
 	# rm $file_prefix"*_reads_graph.txt"
@@ -505,11 +506,11 @@ fi
 
 # MCL clustering
 echo "MCL clustering"
-python /home/lzh8485/haplotypes_workflow/RVHaplo/run_mcl.py "$file_prefix" "$thread" "$mcl_inflation" "$sub_graph"
+python ${workflow_path}/RVHaplo/run_mcl.py "$file_prefix" "$thread" "$mcl_inflation" "$sub_graph"
 
 ## hierarchical clustering
 echo "hierarchical clustering"
-python /home/lzh8485/haplotypes_workflow/RVHaplo/hierarchical_cluster.py $file_prefix"_matrix.pickle" $lar_cluster $depth \
+python ${workflow_path}/RVHaplo/hierarchical_cluster.py $file_prefix"_matrix.pickle" $lar_cluster $depth \
 	$ovlap_cluster $weight_cluster $abundance $file_prefix
 
 ## reconstruct haplotypes
@@ -518,11 +519,11 @@ mkdir -p $file_path"/clusters"
 
 echo "haplotypes reconstruction"
 
-python /home/lzh8485/haplotypes_workflow/RVHaplo/out_haplotypes.py $file_prefix"_clusters.pickle" $file_bam_sorted $file_path $file_acgt x $file_prefix"_consensus.fasta" $s_pos $e_pos
+python ${workflow_path}/RVHaplo/out_haplotypes.py $file_prefix"_clusters.pickle" $file_bam_sorted $file_path $file_acgt x $file_prefix"_consensus.fasta" $s_pos $e_pos
 
 echo "haplotypes polishment (medaka)"
-python /home/lzh8485/haplotypes_workflow/RVHaplo/extract_reads.py $file_path $prefix x
-python /home/lzh8485/haplotypes_workflow/RVHaplo/run_medaka.py $file_path $prefix x
+python ${workflow_path}/RVHaplo/extract_reads.py $file_path $prefix x
+python ${workflow_path}/RVHaplo/run_medaka.py $file_path $prefix x
 
 rm $file_prefix"_matrix.pickle"
 rm $file_prefix"_reads_cluster.txt"
