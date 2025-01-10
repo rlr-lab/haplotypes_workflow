@@ -20,19 +20,19 @@ nextflow run main.nf [options]
 
 ### General options
 
---barcodes    A 2-column csv file containing the fastq file prefixes (such as barcode01) and the sample name
---fastq_dir   Path to a directory containing either a) a folder of fastq files for each barcode, or b) a fastq file for each barcode
---regions_bed Path to a .bed file with coordinates for the region of interest
---reference   Path to a fasta file with a reference genome for reads to be aligned against (See Reference and Regions below)
---outdir      Path for the output to be stored
---virus       Either HIV or SIV
--work-dir     Path to pipeline work directory (default: /projects/b1042/LorenzoRedondoLab/Seth/work)
+--barcodes    string, A 2-column csv file containing the fastq file prefixes (such as barcode01) and the sample name
+--fastq_dir   string, Path to a directory containing either a) a folder of fastq files for each barcode, or b) a fastq file for each barcode
+--regions_bed string, Path to a .bed file with coordinates for the region of interest
+--reference   string, Path to a fasta file with a reference genome for reads to be aligned against (See Reference and Regions below)
+--outdir      string, Path for the output to be stored
+--virus       string, Either 'HIV' or 'SIV'
+-work-dir     string, Path to pipeline work directory (default: /projects/b1042/LorenzoRedondoLab/Seth/work)
 See more details [here](https://www.nextflow.io/docs/latest/cli.html#pipeline-parameters)
 
 ### Options passed to RV Haplo
 
---subgraphs   Number of subgraphs to run MCL (default: 1)
---abundance   A threshold for filtering low-abundance haplotypes. (default: 0.005)
+--subgraphs   integer, Number of subgraphs to run MCL (default: 1)
+--abundance   float, A threshold for filtering low-abundance haplotypes. (default: 0.005)
 
 ## Reference and Regions
 
