@@ -4,34 +4,44 @@
 
 ```shell
 git clone https://github.com/rlr-lab/haplotypes_workflow.git
+cd haplotypes_workflow
 ```
 
-Or, pull to edit files before pushing to share
+## On Quest - activate Nextflow module
 
 ```shell
-git pull https://github.com/rlr-lab/haplotypes_workflow.git
-```
-
-## Install conda environment
-
-```shell
-mamba env create -f rvhaplo.yaml
-```
-
-## On Quest - activate nextflow module and run
-
-```shell
+module purge all
+# Version 24.04.4 is currently the most recent available on Quest
 module load nextflow/24.04.4
-nextflow run main.nf
+nextflow run main.nf [options]
 ```
+
+## Options
+
+### General options
+
+--barcodes    A 2-column csv file containing the fastq file prefixes (such as barcode01) and the sample name
+--fastq_dir   Path to a directory containing either a) a folder of fastq files for each barcode, or b) a fastq file for each barcode
+--regions_bed Path to a .bed file with coordinates for the region of interest
+--reference   Path to a fasta file with a reference genome for reads to be aligned against (See Reference and Regions below)
+--outdir      Path for the output to be stored
+--virus       Either HIV or SIV
+-work-dir     Path to pipeline work directory (default: /projects/b1042/LorenzoRedondoLab/Seth/work)
+See more details [here](https://www.nextflow.io/docs/latest/cli.html#pipeline-parameters)
+
+### Options passed to RV Haplo
+
+--subgraphs   Number of subgraphs to run MCL (default: 1)
+--abundance   A threshold for filtering low-abundance haplotypes. (default: 0.005)
 
 ## Reference and Regions
 
-HXB2Ref_FullGenome.fas
-: HIV reference genome
-SIVMac239FullGenome.fas
-: SIV reference genome
+### HIV
 
-## Issues
+Reference genome: HXB2Ref_FullGenome.fas
+Region .bed file: HXB2regions.bed
 
-Currently, most of the file paths are specific paths. These need to be updated to relative paths so the workflow can be run by another user.
+### SIV
+
+Reference genome: SIVMac239FullGenome.fas
+Region .bed file: SIVregions.bed
