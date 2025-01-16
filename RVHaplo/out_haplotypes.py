@@ -15,7 +15,7 @@ file_ref = sys.argv[5]
 file_out = sys.argv[6]
 s_pos = int(sys.argv[7])
 e_pos = int(sys.argv[8])
-workflow_path = (sys.argv[9])
+workflow_path = sys.argv[9]
 
 attributes = ['pos', 'reads_all','deletions','A', 'C', 'G', 'T']
 chara = 'ACGT'
