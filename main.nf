@@ -1,8 +1,8 @@
-params.barcodes = "/projects/b1042/LorenzoRedondoLab/Seth/F3_bams/barcodes.txt"
-params.fastq_dir = "/projects/b1042/LorenzoRedondoLab/Seth/F3_bams"
-params.regions_bed = "/home/lzh8485/haplotypes_workflow/SIVregions.bed"
-params.reference = "/home/lzh8485/haplotypes_workflow/SIVMac239FullGenome.fas"
-params.outdir = "/projects/b1042/LorenzoRedondoLab/Seth/F3_bams/nf-results"
+params.barcodes = "barcodes.txt"
+params.fastq_dir = ""
+params.regions_bed = "${workflow.projectDir}/SIVregions.bed"
+params.reference = "${workflow.projectDir}/SIVMac239FullGenome.fas"
+params.outdir = "${workflow.projectDir}/nf-results"
 params.virus = "SIV"
 // Match RV Haplo defaults but allow changing
 params.subgraphs = 1
