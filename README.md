@@ -39,6 +39,8 @@ See more details [here](https://www.nextflow.io/docs/latest/cli.html#pipeline-pa
 |--subgraphs|*integer*, Number of subgraphs to run MCL (default: 1)|
 |--abundance|*float*, A threshold for filtering low-abundance haplotypes. (default: 0.01)|
 
+See the RVHaplo documentation [here](https://github.com/dhcai21/RVHaplo) and the journal article describing the software [here](https://doi.org/10.1093/bioinformatics/btac089).
+
 ## Reference and Regions
 
 ### HIV
