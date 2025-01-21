@@ -31,7 +31,7 @@ process concatenateFastq {
     fi
     if [ ! -d ${outdir}/${sample_id} ]; then
         mkdir ${outdir}/${sample_id};
-    elif [ d ${outdir}/${sample_id} ]; then
+    elif [ -d ${outdir}/${sample_id} ]; then
         rm -rf ${outdir}/${sample_id};
         mkdir ${outdir}/${sample_id};
     fi
@@ -112,10 +112,10 @@ process firstConsensus {
     python ${workflow.projectDir}/rename_contigs.py -i reference_contigs.fasta -o renamed_contigs.fasta -b ${regions_bed}
 
     # Alignment and first consensus
-    mini_align -i ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz -r renamed_contigs.fasta -m -t 4 -p firstAlign
+    mini_align -i ${sample_id}_concatenated.fastq.gz -r renamed_contigs.fasta -m -t 4 -p firstAlign
     medaka inference firstAlign.bam ${sample_id}.hdf --threads 2 --regions ${regions} --model r1041_e82_400bps_hac_v4.3.0
-    medaka sequence *.hdf renamed_contigs.fasta ${outdir}/${sample_id}/${sample_id}_firstConsensus.fasta --threads 4 --no-fillgaps --regions ${regions}
-    cp ${outdir}/${sample_id}/${sample_id}_firstConsensus.fasta ${sample_id}_firstConsensus.fasta
+    medaka sequence *.hdf renamed_contigs.fasta ${sample_id}_firstConsensus.fasta --threads 4 --no-fillgaps --regions ${regions}
+    cp ${sample_id}_firstConsensus.fasta ${outdir}/${sample_id}/${sample_id}_firstConsensus.fasta
     """
 }
 
