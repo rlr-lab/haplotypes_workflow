@@ -28,6 +28,7 @@ nextflow run main.nf [options]
 |--reference|*string*, Path to a fasta file with a reference genome for reads to be aligned against. See Reference and Regions below (default: SIVMac239FullGenome.fas)|
 |--outdir|*string*, Path for the output to be stored (default: nf-results/)|
 |--virus|*string*, Either 'HIV' or 'SIV' (default: SIV)|
+|--min_read_length|*integer*, Minimum read length allowable for QC filtering|
 |-work-dir|*string*, Path to pipeline work directory (default: /projects/b1042/LorenzoRedondoLab/Seth/work)|
 
 See more details [here](https://www.nextflow.io/docs/latest/cli.html#pipeline-parameters)
@@ -60,3 +61,7 @@ barcode01,SampleA,Fragment_1
 barcode02,SampleA,Fragment_2
 barcode03,SampleB,Fragment_4 Fragment_5
 ```
+
+## Issues
+
+If the third column of the barcode .csv is left blank, the program is still giving an 'unbound variable' error. Currently, fragments must be specified, even if the whole genome is being aligned.
