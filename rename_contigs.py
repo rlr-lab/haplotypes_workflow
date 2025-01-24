@@ -13,15 +13,14 @@ def main():
   if args.bedfile:
     bedfile = open(args.bedfile)
     bedlines = bedfile.readlines()
+    # Make sure bedfiles end with extra line
     for i in bedlines:
       new_names.append(i.split('	')[3])
     bedfile.close()
-    print(new_names)
   elif args.contigs:
     new_names.append(args.contigs)
     new_names=new_names[0]
     new_names=[i + "\n" for i in new_names]
-    print(new_names)
   else:
     print("Either a bedfile or array of contig names must be specified")
     exit()
