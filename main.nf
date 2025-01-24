@@ -4,9 +4,11 @@ params.regions_bed = "${workflow.projectDir}/SIVregions.bed"
 params.reference = "${workflow.projectDir}/SIVMac239FullGenome.fas"
 params.outdir = "${workflow.projectDir}/nf-results"
 params.virus = "SIV"
-// Match RV Haplo defaults but allow changing
+params.min_read_length = 1200
+// RVHaplo parameters
 params.subgraphs = 1
 params.abundance = 0.01
+params.smallest_snv = 20
 
 process concatenateFastq {
     
@@ -76,7 +78,9 @@ process firstConsensus {
     # Get regions
     regions_array=()
     IFS=" "
-    regions_array+=("${regions}")
+    if [ "${regions}" != "null" ]; then
+        regions_array+=("${regions}")
+    fi
     unset IFS
 
     # If no regions specified, do whole genome
@@ -91,15 +95,16 @@ process firstConsensus {
             regions_array+=("Fragment_2")
             regions_array+=("Fragment_3.1")
             regions_array+=("Fragment_3.2")
+            regions_array+=("barcode")
             regions_array+=("Fragment_4")
             regions_array+=("Fragment_5")
         fi
     # Split SIV Fragment_3 into 3 parts
     else
-        for i in \${regions_array}; do
+        for i in \${regions_array[@]}; do
             if [ "\$i" == "Fragment_3" ] && [ "${virus}" == "SIV" ]; then
                 todelete="Fragment_3"
-                regions_array=( "\$regions_array[@]/\$todelete}" )
+                regions_array=( "\${regions_array[@]/\$todelete}" )
                 regions_array+=("Fragment_3.1")
                 regions_array+=("Fragment_3.2")
                 regions_array+=("barcode")
@@ -112,9 +117,9 @@ process firstConsensus {
     python ${workflow.projectDir}/rename_contigs.py -i reference_contigs.fasta -o renamed_contigs.fasta -b ${regions_bed}
 
     # Alignment and first consensus
-    mini_align -i ${sample_id}_concatenated.fastq.gz -r renamed_contigs.fasta -m -t 4 -p firstAlign
+    mini_align -i ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz -r renamed_contigs.fasta -m -t 4 -p firstAlign
     medaka inference firstAlign.bam ${sample_id}.hdf --threads 2 --regions ${regions} --model r1041_e82_400bps_hac_v4.3.0
-    medaka sequence *.hdf renamed_contigs.fasta ${sample_id}_firstConsensus.fasta --threads 4 --no-fillgaps --regions ${regions}
+    medaka sequence *.hdf renamed_contigs.fasta ${sample_id}_firstConsensus.fasta --threads 4 --no-fillgaps --regions \${regions_array[@]}
     cp ${sample_id}_firstConsensus.fasta ${outdir}/${sample_id}/${sample_id}_firstConsensus.fasta
     """
 }
@@ -138,21 +143,35 @@ process haplotypes {
     path outdir
     val subgraphs
     val abundance
+    val min_read_length
+    val smallest_snv
 
     shell:
     """
-    # Remove sequences <1800b
-    bioawk -c fastx '(length(\$seq)>1800) {print ">" \$name ORS \$seq}' ${sample_id}_concatenated.fastq.gz > ${sample_id}_filtered.fastq
+    # Remove sequences under minimum read length
+    bioawk -c fastx '(length(\$seq)>${min_read_length}) {print ">" \$name ORS \$seq}' ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz > ${sample_id}_filtered.fastq
 
-    # Align to first consensus, make new consensus
-    mini_align -i ${sample_id}_filtered.fastq -r ${sample_id}_firstConsensus.fasta -m -t 4 -p secondAlign
-    medaka inference secondAlign.bam ${sample_id}.hdf --threads 2 --model r1041_e82_400bps_hac_v4.3.0
-    medaka sequence ${sample_id}.hdf ${sample_id}_firstConsensus.fasta $outdir/$sample_id/${sample_id}_realignment.fasta --threads 4
-    minimap2 -ax map-ont $outdir/$sample_id/${sample_id}_realignment.fasta ${sample_id}_filtered.fastq > ${sample_id}_RVHaploinput.sam
+    # Rename contigs
+    python ${workflow.projectDir}/rename_contigs.py -i ${outdir}/${sample_id}/${sample_id}_firstConsensus.fasta -o ${sample_id}_firstConsensus_renamed.fasta -c ${regions}
 
-    # Run RVHaplo
-    RVHaploPath=${workflow.projectDir}"/rvhaplo.sh"
-    . "\${RVHaploPath}" -i ${sample_id}_RVHaploinput.sam -r $outdir/$sample_id/${sample_id}_realignment.fasta -o $outdir/$sample_id -p ${sample_id} -t 8 -sg $subgraphs -a $abundance;
+    firstcon_length=\$(wc -l < ${outdir}/${sample_id}/${sample_id}_firstConsensus.fasta)
+    filtered_length=\$(wc -l < ${sample_id}_filtered.fastq)
+
+    if [ \$firstcon_length -lt 2 ]; then
+        echo "No reads aligned in first consensus" > $outdir/$sample_id/${sample_id}_error.txt
+    elif [ \$filtered_length -lt 2 ]; then
+        echo "No long reads (length > ${min_read_length}) present - QC Fail" > $outdir/$sample_id/${sample_id}_error.txt
+    else
+        # Align to first consensus, make new consensus
+        mini_align -i ${sample_id}_filtered.fastq -r ${sample_id}_firstConsensus_renamed.fasta -m -t 4 -p secondAlign
+        medaka inference secondAlign.bam ${sample_id}.hdf --threads 2 --model r1041_e82_400bps_hac_v4.3.0
+        medaka sequence ${sample_id}.hdf ${sample_id}_firstConsensus_renamed.fasta $outdir/$sample_id/${sample_id}_realignment.fasta --threads 4
+        minimap2 -ax map-ont $outdir/$sample_id/${sample_id}_realignment.fasta ${sample_id}_filtered.fastq > ${sample_id}_RVHaploinput.sam
+
+        # Run RVHaplo
+        RVHaploPath=${workflow.projectDir}"/rvhaplo.sh"
+        . "\${RVHaploPath}" -i ${sample_id}_RVHaploinput.sam -r $outdir/$sample_id/${sample_id}_realignment.fasta -o $outdir/$sample_id -p ${sample_id} -t 8 -sg $subgraphs -a $abundance -ss $smallest_snv;
+    fi
     """
 }
 
@@ -163,5 +182,5 @@ workflow {
         .set {barcodes_ch}
     concatenated = concatenateFastq(params.fastq_dir, barcodes_ch, params.outdir)
     firstCon = firstConsensus(barcodes_ch, concatenated, params.reference, params.regions_bed, params.virus, params.outdir)
-    haplotypes(barcodes_ch, concatenated, firstCon, params.outdir, params.subgraphs, params.abundance)
+    haplotypes(barcodes_ch, concatenated, firstCon, params.outdir, params.subgraphs, params.abundance, params.min_read_length, params.smallest_snv)
 }
