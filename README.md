@@ -28,7 +28,7 @@ nextflow run main.nf [options]
 |--reference|*string*, Path to a fasta file with a reference genome for reads to be aligned against. See Reference and Regions below (default: SIVMac239FullGenome.fas)|
 |--outdir|*string*, Path for the output to be stored (default: nf-results/)|
 |--virus|*string*, Either 'HIV' or 'SIV' (default: SIV)|
-|--min_read_length|*integer*, Minimum read length allowable for QC filtering|
+|--min_read_length|*integer*, Minimum read length allowable for QC filtering (default: 1200)|
 |-work-dir|*string*, Path to pipeline work directory (default: /projects/b1042/LorenzoRedondoLab/Seth/work)|
 
 See more details [here](https://www.nextflow.io/docs/latest/cli.html#pipeline-parameters)
@@ -39,6 +39,7 @@ See more details [here](https://www.nextflow.io/docs/latest/cli.html#pipeline-pa
 |:-----|:----------|
 |--subgraphs|*integer*, Number of subgraphs to run MCL (default: 1)|
 |--abundance|*float*, A threshold for filtering low-abundance haplotypes. (default: 0.01)|
+|--smallest_snv|*integer*, Minimum # of SNV sites for haplotype construction. (default: 20)|
 
 See the RVHaplo documentation [here](https://github.com/dhcai21/RVHaplo) and the journal article describing the software [here](https://doi.org/10.1093/bioinformatics/btac089).
 
