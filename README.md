@@ -22,7 +22,7 @@ nextflow run main.nf [options]
 
 |Option|Description|
 |:-------|:-----------|
-|--barcode|*string*, A 3-column csv file containing the fastq file prefixes (such as barcode01), the sample name, and the fragment(s) sequenced. See example below|
+|--barcodes|*string*, A 3-column csv file containing the fastq file prefixes (such as barcode01), the sample name, and the fragment(s) sequenced. See example below|
 |--fastq_dir|*string*, Path to a directory containing either (a) a folder of fastq files for each barcode, or (b) a fastq file for each barcode|
 |--regions_bed|*string*, Path to a .bed file with coordinates for the region of interest (default: SIVregions.bed)|
 |--reference|*string*, Path to a fasta file with a reference genome for reads to be aligned against. See Reference and Regions below (default: SIVMac239FullGenome.fas)|
