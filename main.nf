@@ -14,7 +14,7 @@ process concatenateFastq {
     
     executor 'local'
     // Conda not needed, but initialized now so that the next process doesn't time out while creating environment
-    conda 'rvhaplo.yaml'
+    conda "${workflow.projectDir}/rvhaplo.yaml"
 
     input:
     path fastq_dir
@@ -52,7 +52,7 @@ process concatenateFastq {
 process firstConsensus {
 
     executor 'slurm'
-    conda 'rvhaplo.yaml'
+    conda "${workflow.projectDir}/rvhaplo.yaml"
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 4
@@ -127,12 +127,12 @@ process firstConsensus {
 process haplotypes {
     
     executor 'slurm'
-    conda 'rvhaplo.yaml'
+    conda "${workflow.projectDir}/rvhaplo.yaml"
     clusterOptions = '-A b1042'
-    queue = 'genomics'
+    queue = 'genomics-himem'
     cpus = 8
     time = { 120.minute * task.attempt}
-    memory = { 80.GB * task.attempt}
+    memory = { 180.GB + (60.GB * task.attempt) }
     errorStrategy 'retry'
     maxRetries 2
 
