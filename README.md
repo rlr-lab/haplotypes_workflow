@@ -16,6 +16,21 @@ module load nextflow/24.04.4
 nextflow run main.nf [options]
 ```
 
+An alternative option is to use a conda environment instead of a pre-installed module. This allows the program to run on other HPC systems besides Northwestern's Quest HPC.
+
+```shell
+mamba create -n nextflow nextflow
+mamba activate nextflow
+```
+
+If you are submitting a job to a queue to run the pipeline, add the following to the beginning of your workflow to activate your new conda environment.
+
+```shell
+module load mamba
+source /home/[USERID]/.bashrc
+conda activate /home/[USERID]/.conda/envs/nextflow
+```
+
 ## Options
 
 ### General options
@@ -38,8 +53,8 @@ See more details [here](https://www.nextflow.io/docs/latest/cli.html#pipeline-pa
 |Option|Description|
 |:-----|:----------|
 |--subgraphs|*integer*, Number of subgraphs to run MCL (default: 1)|
-|--abundance|*float*, A threshold for filtering low-abundance haplotypes. (default: 0.01)|
-|--smallest_snv|*integer*, Minimum # of SNV sites for haplotype construction. (default: 20)|
+|--abundance|*float*, A threshold for filtering low-abundance haplotypes. (default: 0.001)|
+|--smallest_snv|*integer*, Minimum # of SNV sites for haplotype construction. (default: 5)|
 
 See the RVHaplo documentation [here](https://github.com/dhcai21/RVHaplo) and the journal article describing the software [here](https://doi.org/10.1093/bioinformatics/btac089).
 
