@@ -7,8 +7,8 @@ params.virus = "SIV"
 params.min_read_length = 1200
 // RVHaplo parameters
 params.subgraphs = 1
-params.abundance = 0.01
-params.smallest_snv = 20
+params.abundance = 0.001
+params.smallest_snv = 5
 
 process concatenateFastq {
     
@@ -121,6 +121,13 @@ process firstConsensus {
     medaka inference firstAlign.bam ${sample_id}.hdf --threads 2 --regions ${regions} --model r1041_e82_400bps_hac_v4.3.0
     medaka sequence *.hdf renamed_contigs.fasta ${sample_id}_firstConsensus.fasta --threads 4 --no-fillgaps --regions \${regions_array[@]}
     cp ${sample_id}_firstConsensus.fasta ${outdir}/${sample_id}/${sample_id}_firstConsensus.fasta
+
+    # Error handling if consensus isn't created
+    if [ ! -f ${outdir}/${sample_id}/${sample_id}_firstConsensus.fasta ]; then 
+        echo "Could not build first consensus" >> $outdir/$sample_id/${sample_id}_error.txt
+        pwd >> $outdir/$sample_id/${sample_id}_error.txt
+        exit 1
+    fi
     """
 }
 
@@ -131,7 +138,7 @@ process haplotypes {
     clusterOptions = '-A b1042'
     queue = 'genomics-himem'
     cpus = 8
-    time = { 120.minute * task.attempt}
+    time = { 180.minute + (300.minute * (task.attempt - 1)) }
     memory = { 180.GB + (60.GB * task.attempt) }
     errorStrategy 'retry'
     maxRetries 2
@@ -148,19 +155,34 @@ process haplotypes {
 
     shell:
     """
-    # Remove sequences under minimum read length
-    bioawk -c fastx '(length(\$seq)>${min_read_length}) {print ">" \$name ORS \$seq}' ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz > ${sample_id}_filtered.fastq
+    # Make sure first consensus exists
+    if [ ! -f ${outdir}/${sample_id}/${sample_id}_firstConsensus.fasta ]; then 
+        echo "Could not build first consensus" >> $outdir/$sample_id/${sample_id}_error.txt
+        pwd >> $outdir/$sample_id/${sample_id}_error.txt
+        exit 0
+    fi
+
+    # Align only to filter reads
+    minimap2 -ax map-ont $outdir/$sample_id/${sample_id}_firstConsensus.fasta ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz > ${sample_id}_IntermediateAlignment.sam
+    # Remove unaligned reads and filter for length
+    samtools view -e 'rlen>${min_read_length}' -bS -F 4 -O BAM -o ${sample_id}_filtered.bam ${sample_id}_IntermediateAlignment.sam
+    samtools fastq ${sample_id}_filtered.bam > ${sample_id}_filtered.fastq
+    cp ${sample_id}_filtered.bam $outdir/$sample_id/
+    cp ${sample_id}_filtered.fastq $outdir/$sample_id/
 
     # Rename contigs
     python ${workflow.projectDir}/rename_contigs.py -i ${outdir}/${sample_id}/${sample_id}_firstConsensus.fasta -o ${sample_id}_firstConsensus_renamed.fasta -c ${regions}
 
+    # Make sure fasta files have content
     firstcon_length=\$(wc -l < ${outdir}/${sample_id}/${sample_id}_firstConsensus.fasta)
     filtered_length=\$(wc -l < ${sample_id}_filtered.fastq)
 
+    # Check that first consensus has content
     if [ \$firstcon_length -lt 2 ]; then
-        echo "No reads aligned in first consensus" > $outdir/$sample_id/${sample_id}_error.txt
+        echo "No reads aligned in first consensus" >> $outdir/$sample_id/${sample_id}_error.txt
+    # Check that some filtered reads passed
     elif [ \$filtered_length -lt 2 ]; then
-        echo "No long reads (length > ${min_read_length}) present - QC Fail" > $outdir/$sample_id/${sample_id}_error.txt
+        echo "QC Fail - Possibly no long reads (length > ${min_read_length}) present" >> $outdir/$sample_id/${sample_id}_error.txt
     else
         # Align to first consensus, make new consensus
         mini_align -i ${sample_id}_filtered.fastq -r ${sample_id}_firstConsensus_renamed.fasta -m -t 4 -p secondAlign
@@ -170,7 +192,9 @@ process haplotypes {
 
         # Run RVHaplo
         RVHaploPath=${workflow.projectDir}"/rvhaplo.sh"
-        . "\${RVHaploPath}" -i ${sample_id}_RVHaploinput.sam -r $outdir/$sample_id/${sample_id}_realignment.fasta -o $outdir/$sample_id -p ${sample_id} -t 8 -sg $subgraphs -a $abundance -ss $smallest_snv;
+        . "\${RVHaploPath}" -i ${sample_id}_RVHaploinput.sam -r $outdir/$sample_id/${sample_id}_realignment.fasta \
+		    -o $outdir/$sample_id -p ${sample_id} -t 8 -e 0.1 \
+		    -sg $subgraphs -a $abundance -ss $smallest_snv;
     fi
     """
 }
