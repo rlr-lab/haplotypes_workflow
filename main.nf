@@ -56,7 +56,7 @@ process firstConsensus {
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 4
-    time = { 5.minute * task.attempt}
+    time = { 8.minute * task.attempt}
     memory = { 2.GB * task.attempt}
     errorStrategy 'retry'
     maxRetries 2
@@ -93,23 +93,10 @@ process firstConsensus {
         elif [ "${virus}" == "SIV" ]; then
             regions_array+=("Fragment_1")
             regions_array+=("Fragment_2")
-            regions_array+=("Fragment_3.1")
-            regions_array+=("Fragment_3.2")
-            regions_array+=("barcode")
+            regions_array+=("Fragment_3")
             regions_array+=("Fragment_4")
             regions_array+=("Fragment_5")
         fi
-    # Split SIV Fragment_3 into 3 parts
-    else
-        for i in \${regions_array[@]}; do
-            if [ "\$i" == "Fragment_3" ] && [ "${virus}" == "SIV" ]; then
-                todelete="Fragment_3"
-                regions_array=( "\${regions_array[@]/\$todelete}" )
-                regions_array+=("Fragment_3.1")
-                regions_array+=("Fragment_3.2")
-                regions_array+=("barcode")
-            fi
-        done
     fi
 
     # Split reference into separate contigs
