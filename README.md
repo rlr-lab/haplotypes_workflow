@@ -44,6 +44,7 @@ conda activate /home/[USERID]/.conda/envs/nextflow
 |--outdir|*string*, Path for the output to be stored (default: nf-results/)|
 |--virus|*string*, Either 'HIV' or 'SIV' (default: SIV)|
 |--min_read_length|*integer*, Minimum read length allowable for QC filtering (default: 1200)|
+|--split_barcode|*boolean*, Should the barcode analysis for SIV Fragment 3 be performed (default: false)|
 |-work-dir|*string*, Path to pipeline work directory (default: /projects/b1042/LorenzoRedondoLab/Seth/work)|
 
 See more details [here](https://www.nextflow.io/docs/latest/cli.html#pipeline-parameters)
