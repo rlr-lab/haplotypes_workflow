@@ -15,7 +15,8 @@ process concatenateFastq {
     
     executor 'local'
     // Conda not needed, but initialized now so that the next process doesn't time out while creating environment
-    conda "${workflow.projectDir}/rvhaplo.yaml"
+    //conda "${workflow.projectDir}/rvhaplo.yaml"
+    conda "/home/lzh8485/.conda/envs/rvhaplo"
 
     input:
     path fastq_dir
@@ -29,6 +30,7 @@ process concatenateFastq {
 
     shell:
     """
+
     # Create any missing directories
     if [ ! -d ${outdir} ]; then
         mkdir ${outdir};
@@ -47,6 +49,7 @@ process concatenateFastq {
         cat ${fastq_dir}/${sample_id}.fastq.gz > ${sample_id}_concatenated.fastq.gz;
     fi
     cp ${sample_id}_concatenated.fastq.gz ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz
+
     """
 
 }
@@ -54,18 +57,19 @@ process concatenateFastq {
 process firstConsensus {
 
     executor 'slurm'
-    conda "${workflow.projectDir}/rvhaplo.yaml"
+    //conda "${workflow.projectDir}/rvhaplo.yaml"
+    conda "/home/lzh8485/.conda/envs/rvhaplo"
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 4
-    time = { 8.minute * task.attempt}
-    memory = { 4.GB * task.attempt}
+    time = { 20.minute * task.attempt}
+    memory = { 8.GB * task.attempt}
     errorStrategy 'retry'
     maxRetries 2
 
 
     input:
-    tuple val(barcode), val(sample_id), val(regions)
+    tuple val(barcode), val(sample_id)
     path "${sample_id}_concatenated.fastq.gz"
     path reference
     path regions_bed
@@ -74,9 +78,11 @@ process firstConsensus {
 
     output:
     //path "${outdir}/${sample_id}/coverage.txt"
+    path "${sample_id}_*_firstConsensus.fasta"
 
     shell:
     """
+
     # Get regions
     regions_array=(\$(awk '{ print \$4 }' $regions_bed))
 
@@ -120,15 +126,15 @@ process firstConsensus {
         fi
         !((count_index++))
     done
+
     """
 }
 
 process haplotypes {
     
-    tag { fragment }
-
     executor 'slurm'
-    conda "${workflow.projectDir}/rvhaplo.yaml"
+    //conda "${workflow.projectDir}/rvhaplo.yaml"
+    conda "/home/lzh8485/.conda/envs/rvhaplo"
     clusterOptions = '-A b1042'
     queue = 'genomics-himem'
     cpus = 8
@@ -140,25 +146,29 @@ process haplotypes {
     input:
     tuple val(barcode), val(sample_id)
     path "${sample_id}_concatenated.fastq.gz"
-    val fragment
+    path "${sample_id}_*_firstConsensus.fasta"
     path outdir
     val subgraphs
     val abundance
     val min_read_length
     val smallest_snv
+    path regions_bed
 
     shell:
     """
 
     # Get list of created fragment directories
-    dir_list=(\$(echo ${outdir}/${sample_id}/*/))
+    dir_list=(\$(echo ${outdir}/${sample_id}/Fragment*/))
 
     count_index=0
     for i in \${dir_list[@]}; do
 
         # Make sure first consensus exists
-        if [ ! -f \${i}${sample_id}_*_firstConsensus.fasta ]; then 
-            echo "Could not build first consensus" >> $outdir/$sample_id/\${i}${sample_id}_\${count_index}_error.txt
+        if [ \${i} == "${outdir}/${sample_id}/barcode/" ]; then
+            !((count_index++))
+            continue
+        elif [ ! -f \${i}${sample_id}_*_firstConsensus.fasta ]; then 
+            echo "Could not build first consensus" > \${i}${sample_id}_\${count_index}_error.txt
             pwd >> \${i}${sample_id}_\${count_index}_error.txt
             !((count_index++))
             continue
@@ -173,39 +183,41 @@ process haplotypes {
         cp ${sample_id}_\${count_index}_filtered.fastq \${i}${sample_id}_filtered.fastq
 
         # Rename contigs
-        python ${workflow.projectDir}/rename_contigs.py -i ${outdir}/${sample_id}/${sample_id}_firstConsensus.fasta -o ${sample_id}_firstConsensus_renamed.fasta -b ${regions_bed}
+        python ${workflow.projectDir}/rename_contigs.py -i \${i}${sample_id}*firstConsensus.fasta -o \${i}${sample_id}_firstConsensus_renamed.fasta -b ${regions_bed}
 
         # Make sure fasta files have content
-        firstcon_length=\$(wc -l < ${outdir}/${sample_id}/${sample_id}_firstConsensus.fasta)
-        filtered_length=\$(wc -l < ${sample_id}_filtered.fastq)
+        firstcon_length=\$(wc -l < \${i}${sample_id}*firstConsensus.fasta)
+        filtered_length=\$(wc -l < \${i}${sample_id}_filtered.fastq)
 
         # Check that first consensus has content
         if [ \$firstcon_length -lt 2 ]; then
-            echo "No reads aligned in first consensus" >> $outdir/$sample_id/${sample_id}_error.txt
+            echo "No reads aligned in first consensus" > \${i}${sample_id}_error.txt
         # Check that some filtered reads passed
         elif [ \$filtered_length -lt 2 ]; then
-            echo "QC Fail - Possibly no long reads (length > ${min_read_length}) present" >> $outdir/$sample_id/${sample_id}_error.txt
+            echo "QC Fail - Possibly no long reads (length > ${min_read_length}) present" > \${i}${sample_id}_error.txt
         else
             # Align to first consensus, make new consensus
-            mini_align -i ${sample_id}_filtered.fastq -r ${sample_id}_firstConsensus_renamed.fasta -d lr:hq -m -t 4 -p secondAlign
+            mini_align -i \${i}${sample_id}_filtered.fastq -r \${i}${sample_id}_firstConsensus_renamed.fasta -d lr:hq -m -t 4 -p secondAlign
             medaka inference secondAlign.bam ${sample_id}.hdf --threads 2 --model r1041_e82_400bps_hac_v4.3.0
-            medaka sequence ${sample_id}.hdf ${sample_id}_firstConsensus_renamed.fasta $outdir/$sample_id/${sample_id}_realignment.fasta --threads 4
-            minimap2 -ax lr:hq $outdir/$sample_id/${sample_id}_realignment.fasta ${sample_id}_filtered.fastq > ${sample_id}_RVHaploinput.sam
+            medaka sequence ${sample_id}.hdf \${i}${sample_id}_firstConsensus_renamed.fasta \${i}${sample_id}_realignment.fasta --threads 4
+            minimap2 -ax lr:hq \${i}${sample_id}_realignment.fasta \${i}${sample_id}_filtered.fastq > ${sample_id}_RVHaploinput.sam
 
             # Run RVHaplo
             RVHaploPath=${workflow.projectDir}"/rvhaplo.sh"
-            . "\${RVHaploPath}" -i ${sample_id}_RVHaploinput.sam -r $outdir/$sample_id/${sample_id}_realignment.fasta \
-		        -o $outdir/$sample_id -p ${sample_id} -t 8 -e 0.1 \
+            . "\${RVHaploPath}" -i ${sample_id}_RVHaploinput.sam -r \${i}${sample_id}_realignment.fasta \
+		        -o \${i} -p ${sample_id} -t 8 -e 0.1 \
 		        -sg $subgraphs -a $abundance -ss $smallest_snv;
         fi
-    
+    done
+
     """
 }
 
 process countBarcodes {
 
     executor 'slurm'
-    conda "${workflow.projectDir}/rvhaplo.yaml"
+    //conda "${workflow.projectDir}/rvhaplo.yaml"
+    conda "/home/lzh8485/.conda/envs/rvhaplo"
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 2
@@ -226,7 +238,7 @@ process countBarcodes {
         mkdir ${outdir}/${sample_id}/barcode/
     fi
 
-    minimap2 -ax lr:hq ${workflow.projectDir}/barcode_reference.fas ${sample_id}_concatenated.fastq.gz > ${sample_id}_barcode.sam
+    minimap2 -ax lr:hq ${workflow.projectDir}/ReferenceSequences/barcode_reference.fas ${sample_id}_concatenated.fastq.gz > ${sample_id}_barcode.sam
     samtools view -F 4 -bS -h -O BAM -e 'rlen>233' ${sample_id}_barcode.sam > ${sample_id}_barcode.bam
     samtools sort ${sample_id}_barcode.bam > ${sample_id}_barcode_sorted.bam; samtools index ${sample_id}_barcode_sorted.bam
     samtools depth -a -r "barcode" -@ 4 ${sample_id}_barcode_sorted.bam > ${outdir}/${sample_id}/barcode/barcode_depth.txt
@@ -265,7 +277,7 @@ workflow {
 
     concatenated = concatenateFastq(params.fastq_dir, rename_ch, params.outdir)
     firstCon = firstConsensus(rename_ch, concatenated, params.reference, params.regions_bed, params.virus, params.outdir)
-    //haplotypes(barcodes_ch, concatenated, fragment_ch, params.outdir, params.subgraphs, params.abundance, params.min_read_length, params.smallest_snv)
+    haplotypes(rename_ch, concatenated, firstCon, params.outdir, params.subgraphs, params.abundance, params.min_read_length, params.smallest_snv, params.regions_bed)
     if (params.split_barcode)
-        countBarcodes(barcodes_ch, concatenated, params.outdir)
+        countBarcodes(rename_ch, concatenated, params.outdir)
 }

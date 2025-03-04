@@ -37,7 +37,7 @@ conda activate /home/[USERID]/.conda/envs/nextflow
 
 |Option|Description|
 |:-------|:-----------|
-|--barcodes|*string*, A 3-column csv file containing the fastq file prefixes (such as barcode01), the sample name, and the fragment(s) sequenced. See example below|
+|--barcodes|*string*, A 2-column csv file containing the fastq file prefixes (such as barcode01) and the sample name. See example below|
 |--fastq_dir|*string*, Path to a directory containing either (a) a folder of fastq files for each barcode, or (b) a fastq file for each barcode|
 |--regions_bed|*string*, Path to a .bed file with coordinates for the region of interest (default: SIVregions.bed)|
 |--reference|*string*, Path to a fasta file with a reference genome for reads to be aligned against. See Reference and Regions below (default: SIVMac239FullGenome.fas)|
@@ -61,6 +61,8 @@ See the RVHaplo documentation [here](https://github.com/dhcai21/RVHaplo) and the
 
 ## Reference and Regions
 
+Found in the `ReferenceSequences/` folder
+
 ### HIV
 
 Reference genome: HXB2Ref_FullGenome.fas\
@@ -68,17 +70,13 @@ Region .bed file: HXB2regions.bed
 
 ### SIV
 
-Reference genome: SIVMac239FullGenome.fas\
-Region .bed file: SIVregions.bed
+Reference genome: SIVMac239FullGenome_wBarcode.fas\
+Region .bed file: SIVregions_wBarcode.bed
 
 ### Barcode .csv Example
 
 ```text
-barcode01,SampleA,Fragment_1
-barcode02,SampleA,Fragment_2
-barcode03,SampleB,Fragment_4 Fragment_5
+barcode01,SampleA
+barcode02,SampleB
+barcode03,SampleC
 ```
-
-## Issues
-
-If the third column of the barcode .csv is left blank, the program is still giving an 'unbound variable' error. Currently, fragments must be specified, even if the whole genome is being aligned.
