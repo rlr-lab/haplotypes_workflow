@@ -1,7 +1,7 @@
 params.barcodes = "barcodes.txt"
 params.fastq_dir = ""
-params.regions_bed = "${workflow.projectDir}/SIVregions.bed"
-params.reference = "${workflow.projectDir}/SIVMac239FullGenome.fas"
+params.regions_bed = "${workflow.projectDir}/ReferenceSequences/SIVregions_wBarcode.bed"
+params.reference = "${workflow.projectDir}/ReferenceSequences/SIVMac239FullGenome_wBarcode.fas"
 params.outdir = "${workflow.projectDir}/nf-results"
 params.virus = "SIV"
 params.min_read_length = 1200
@@ -59,26 +59,29 @@ process firstConsensus {
     queue = 'genomics'
     cpus = 4
     time = { 8.minute * task.attempt}
-    memory = { 2.GB * task.attempt}
+    memory = { 4.GB * task.attempt}
     errorStrategy 'retry'
     maxRetries 2
 
 
     input:
-    tuple val(barcode), val(sample_id)
+    tuple val(barcode), val(sample_id), val(regions)
     path "${sample_id}_concatenated.fastq.gz"
     path reference
     path regions_bed
     val virus
     path outdir
 
-    script:
+    output:
+    //path "${outdir}/${sample_id}/coverage.txt"
+
+    shell:
     """
     # Get regions
     regions_array=(\$(awk '{ print \$4 }' $regions_bed))
 
     # Coverage of all regions
-    minimap2 -ax map-ont $reference ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz > full_genome.sam
+    minimap2 -ax lr:hq $reference ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz > full_genome.sam
     samtools view -bS -F 4 full_genome.sam > full_genome.bam
     samtools sort full_genome.bam > full_genome_sorted.bam
     samtools index full_genome_sorted.bam
@@ -91,24 +94,20 @@ process firstConsensus {
 
     count_index=0
     for i in \${regions_array[@]}; do
-        echo \${regions_array[@]}
-        echo \$i
         fraction=\${coverage_fractions[\$count_index]}
         fraction=\${fraction:0:4}
         fraction=\$(awk '{print \$1*100}' <<< \$fraction)
-        echo \$fraction
         if [ "\$fraction" -lt "100" ]; then
             !((count_index++))
-            echo "less"
             continue
         fi
         if [ ! -d ${outdir}/${sample_id}/\${i} ]; then
             mkdir ${outdir}/${sample_id}/\${i}
-            echo "making directory mkdir ${outdir}/${sample_id}/\${i}"
+            echo "${sample_id},\$i" >> ${sample_id}Fragments.txt
         fi
 
         # Alignment and first consensus
-        mini_align -i ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz -r renamed_contigs.fasta -m -t 4 -p firstAlign_\${i}
+        mini_align -i ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz -r renamed_contigs.fasta -d lr:hq -m -t 4 -p firstAlign_\${i}
         medaka inference firstAlign_\${i}.bam ${sample_id}_\${i}.hdf --threads 2 --regions \${i} --model r1041_e82_400bps_hac_v4.3.0
         medaka sequence *_\${i}.hdf renamed_contigs.fasta ${sample_id}_\${i}_firstConsensus.fasta --threads 4 --no-fillgaps --regions \${i}
         cp ${sample_id}_\${i}_firstConsensus.fasta ${outdir}/${sample_id}/\${i}/${sample_id}_\${i}_firstConsensus.fasta
@@ -126,6 +125,8 @@ process firstConsensus {
 
 process haplotypes {
     
+    tag { fragment }
+
     executor 'slurm'
     conda "${workflow.projectDir}/rvhaplo.yaml"
     clusterOptions = '-A b1042'
@@ -139,7 +140,7 @@ process haplotypes {
     input:
     tuple val(barcode), val(sample_id)
     path "${sample_id}_concatenated.fastq.gz"
-    path "${sample_id}_firstConsensus.fasta"
+    val fragment
     path outdir
     val subgraphs
     val abundance
@@ -164,7 +165,7 @@ process haplotypes {
         fi
 
         # Align only to filter reads
-        minimap2 -ax map-ont \${i}${sample_id}_*_firstConsensus.fasta ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz > ${sample_id}_\${count_index}_IntermediateAlignment.sam
+        minimap2 -ax lr:hq \${i}${sample_id}_*_firstConsensus.fasta ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz > ${sample_id}_\${count_index}_IntermediateAlignment.sam
         # Remove unaligned reads and filter for length
         samtools view -e 'rlen>${min_read_length}' -bS -F 4 -O BAM -o ${sample_id}_\${count_index}_filtered.bam ${sample_id}_\${count_index}_IntermediateAlignment.sam
         samtools fastq ${sample_id}_\${count_index}_filtered.bam > ${sample_id}_\${count_index}_filtered.fastq
@@ -186,10 +187,10 @@ process haplotypes {
             echo "QC Fail - Possibly no long reads (length > ${min_read_length}) present" >> $outdir/$sample_id/${sample_id}_error.txt
         else
             # Align to first consensus, make new consensus
-            mini_align -i ${sample_id}_filtered.fastq -r ${sample_id}_firstConsensus_renamed.fasta -m -t 4 -p secondAlign
+            mini_align -i ${sample_id}_filtered.fastq -r ${sample_id}_firstConsensus_renamed.fasta -d lr:hq -m -t 4 -p secondAlign
             medaka inference secondAlign.bam ${sample_id}.hdf --threads 2 --model r1041_e82_400bps_hac_v4.3.0
             medaka sequence ${sample_id}.hdf ${sample_id}_firstConsensus_renamed.fasta $outdir/$sample_id/${sample_id}_realignment.fasta --threads 4
-            minimap2 -ax map-ont $outdir/$sample_id/${sample_id}_realignment.fasta ${sample_id}_filtered.fastq > ${sample_id}_RVHaploinput.sam
+            minimap2 -ax lr:hq $outdir/$sample_id/${sample_id}_realignment.fasta ${sample_id}_filtered.fastq > ${sample_id}_RVHaploinput.sam
 
             # Run RVHaplo
             RVHaploPath=${workflow.projectDir}"/rvhaplo.sh"
@@ -225,7 +226,7 @@ process countBarcodes {
         mkdir ${outdir}/${sample_id}/barcode/
     fi
 
-    minimap2 -ax map-ont ${workflow.projectDir}/barcode_reference.fas ${sample_id}_concatenated.fastq.gz > ${sample_id}_barcode.sam
+    minimap2 -ax lr:hq ${workflow.projectDir}/barcode_reference.fas ${sample_id}_concatenated.fastq.gz > ${sample_id}_barcode.sam
     samtools view -F 4 -bS -h -O BAM -e 'rlen>233' ${sample_id}_barcode.sam > ${sample_id}_barcode.bam
     samtools sort ${sample_id}_barcode.bam > ${sample_id}_barcode_sorted.bam; samtools index ${sample_id}_barcode_sorted.bam
     samtools depth -a -r "barcode" -@ 4 ${sample_id}_barcode_sorted.bam > ${outdir}/${sample_id}/barcode/barcode_depth.txt
@@ -237,13 +238,34 @@ process countBarcodes {
 }
 
 workflow {
+    
+    def bedfile = new File(params.regions_bed)
+    def bed_rows = bedfile.readLines()*.split('	')
+    Set regions = bed_rows*.getAt(3)
     Channel
-        .fromPath(params.barcodes, checkIfExists: true, type: 'file')
-        .splitCsv()
-        .set {barcodes_ch}
-    concatenated = concatenateFastq(params.fastq_dir, barcodes_ch, params.outdir)
-    firstCon = firstConsensus(barcodes_ch, concatenated, params.reference, params.regions_bed, params.virus, params.outdir)
-    //haplotypes(barcodes_ch, concatenated, firstCon, params.outdir, params.subgraphs, params.abundance, params.min_read_length, params.smallest_snv)
-    //if (params.virus == "SIV")
-    //    countBarcodes(barcodes_ch, concatenated, params.outdir)
+        .fromList(regions)
+        .set {fragment_ch}
+
+
+    def barcode_file = new File(params.barcodes)
+    def barcode_rows = barcode_file.readLines()*.split(',')
+    Set barcode_name = barcode_rows*.getAt(0)
+    Channel
+        .fromList(barcode_name)
+        .set {barcode_ch}
+
+    Set sample_names = barcode_rows*.getAt([0,1])
+    Channel
+        .fromList(sample_names)
+        .set {sample_ch}
+
+    barcode_ch.join(sample_ch).set {rename_ch}
+    barcode_ch.join(sample_ch).combine(fragment_ch).transpose(remainder: true).set {final_fragment_ch}
+    
+
+    concatenated = concatenateFastq(params.fastq_dir, rename_ch, params.outdir)
+    firstCon = firstConsensus(rename_ch, concatenated, params.reference, params.regions_bed, params.virus, params.outdir)
+    //haplotypes(barcodes_ch, concatenated, fragment_ch, params.outdir, params.subgraphs, params.abundance, params.min_read_length, params.smallest_snv)
+    if (params.split_barcode)
+        countBarcodes(barcodes_ch, concatenated, params.outdir)
 }
