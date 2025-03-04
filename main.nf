@@ -208,6 +208,7 @@ process haplotypes {
 		        -o \${i} -p ${sample_id} -t 8 -e 0.1 \
 		        -sg $subgraphs -a $abundance -ss $smallest_snv;
         fi
+        !((count_index++))
     done
 
     """
