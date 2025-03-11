@@ -39,11 +39,12 @@ conda activate /home/[USERID]/.conda/envs/nextflow
 |:-------|:-----------|
 |--barcodes|*string*, A 2-column csv file containing the fastq file prefixes (such as barcode01) and the sample name. See example below|
 |--fastq_dir|*string*, Path to a directory containing either (a) a folder of fastq files for each barcode, or (b) a fastq file for each barcode|
-|--regions_bed|*string*, Path to a .bed file with coordinates for the region of interest (default: SIVregions.bed)|
-|--reference|*string*, Path to a fasta file with a reference genome for reads to be aligned against. See Reference and Regions below (default: SIVMac239FullGenome.fas)|
+|--regions_bed|*string*, Path to a .bed file with coordinates for the region of interest (default: SIVregions_wBarcode.bed)|
+|--reference|*string*, Path to a fasta file with a reference genome for reads to be aligned against. See Reference and Regions below (default: SIVMac239FullGenome_wBarcode.fas)|
 |--outdir|*string*, Path for the output to be stored (default: nf-results/)|
 |--virus|*string*, Either 'HIV' or 'SIV' (default: SIV)|
 |--min_read_length|*integer*, Minimum read length allowable for QC filtering (default: 1200)|
+|--min_depth|*integer*, Minimum fragment depth of coverage allowable for haplotype analysis (default: 1000)|
 |--split_barcode|*boolean*, Should the barcode analysis for SIV Fragment 3 be performed (default: false)|
 |-work-dir|*string*, Path to pipeline work directory (default: /projects/b1042/LorenzoRedondoLab/Seth/work)|
 
