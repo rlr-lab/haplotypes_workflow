@@ -214,7 +214,7 @@ for i in final_snv:
 
 ### check the satisfaction of SNV sites's number
 if len(final_snv)<smallest_snv:
-    print("No enough SNV sites.\nexit")
+    print("Not enough SNV sites.\nexit")
     f.write("\nA small number of SNV sites indicates one haplotype\nexit")
     f.close()
     exit()

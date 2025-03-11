@@ -5,6 +5,7 @@ params.reference = "${workflow.projectDir}/ReferenceSequences/SIVMac239FullGenom
 params.outdir = "${workflow.projectDir}/nf-results"
 params.virus = "SIV"
 params.min_read_length = 1200
+params.min_depth = 1000
 params.split_barcode = false
 // RVHaplo parameters
 params.subgraphs = 1
@@ -75,10 +76,12 @@ process firstConsensus {
     path regions_bed
     val virus
     path outdir
+    val min_read_length
+    val min_depth
 
     output:
     //path "${outdir}/${sample_id}/coverage.txt"
-    path "${sample_id}_*_firstConsensus.fasta"
+    path "${sample_id}*firstConsensus.fasta"
 
     shell:
     """
@@ -88,11 +91,15 @@ process firstConsensus {
 
     # Coverage of all regions
     minimap2 -ax lr:hq $reference ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz > full_genome.sam
-    samtools view -bS -F 4 full_genome.sam > full_genome.bam
+    samtools view -e 'rlen>${min_read_length}' -bS -F 4 full_genome.sam > full_genome.bam
+    samtools fastq full_genome.bam > ${outdir}/${sample_id}/${sample_id}_filtered.fastq
     samtools sort full_genome.bam > full_genome_sorted.bam
     samtools index full_genome_sorted.bam
+    echo "Getting coverage"
     bedtools coverage -a $regions_bed -b full_genome_sorted.bam -nonamecheck > ${outdir}/${sample_id}/coverage.txt
+    cat ${outdir}/${sample_id}/coverage.txt
     coverage_fractions=(\$(awk '{ print \$NF }' ${outdir}/${sample_id}/coverage.txt))
+    coverage_depth=(\$(awk '{ print \$5 }' ${outdir}/${sample_id}/coverage.txt))
 
     # Split reference into separate contigs
     bedtools getfasta -fi ${reference} -bed ${regions_bed} > reference_contigs.fasta
@@ -100,11 +107,13 @@ process firstConsensus {
 
     count_index=0
     for i in \${regions_array[@]}; do
+        echo \${i}
         fraction=\${coverage_fractions[\$count_index]}
         fraction=\${fraction:0:4}
         fraction=\$(awk '{print \$1*100}' <<< \$fraction)
-        if [ "\$fraction" -lt "100" ]; then
-            !((count_index++))
+        depth=\${coverage_depth[\$count_index]}
+        if [ "\$fraction" -lt "100" ] || [ "\$depth" -lt "$min_depth" ]; then
+            let "count_index+=1"
             continue
         fi
         if [ ! -d ${outdir}/${sample_id}/\${i} ]; then
@@ -113,7 +122,7 @@ process firstConsensus {
         fi
 
         # Alignment and first consensus
-        mini_align -i ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz -r renamed_contigs.fasta -d lr:hq -m -t 4 -p firstAlign_\${i}
+        mini_align -i ${outdir}/${sample_id}/${sample_id}_filtered.fastq -r renamed_contigs.fasta -d lr:hq -m -t 4 -p firstAlign_\${i}
         medaka inference firstAlign_\${i}.bam ${sample_id}_\${i}.hdf --threads 2 --regions \${i} --model r1041_e82_400bps_hac_v4.3.0
         medaka sequence *_\${i}.hdf renamed_contigs.fasta ${sample_id}_\${i}_firstConsensus.fasta --threads 4 --no-fillgaps --regions \${i}
         cp ${sample_id}_\${i}_firstConsensus.fasta ${outdir}/${sample_id}/\${i}/${sample_id}_\${i}_firstConsensus.fasta
@@ -124,7 +133,7 @@ process firstConsensus {
             pwd >> ${outdir}/${sample_id}/\${i}/${sample_id}_error.txt
             continue
         fi
-        !((count_index++))
+        let "count_index+=1"
     done
 
     """
@@ -136,21 +145,20 @@ process haplotypes {
     //conda "${workflow.projectDir}/rvhaplo.yaml"
     conda "/home/lzh8485/.conda/envs/rvhaplo"
     clusterOptions = '-A b1042'
-    queue = 'genomics-himem'
+    queue = 'genomics'
     cpus = 8
-    time = { 180.minute + (300.minute * (task.attempt - 1)) }
-    memory = { 180.GB + (60.GB * task.attempt) }
+    time = { 120.minute * task.attempt }
+    memory = { 60.GB + (60.GB * task.attempt) }
     errorStrategy 'retry'
     maxRetries 2
 
     input:
     tuple val(barcode), val(sample_id)
     path "${sample_id}_concatenated.fastq.gz"
-    path "${sample_id}_*_firstConsensus.fasta"
+    path "${sample_id}*firstConsensus.fasta"
     path outdir
     val subgraphs
     val abundance
-    val min_read_length
     val smallest_snv
     path regions_bed
 
@@ -158,58 +166,64 @@ process haplotypes {
     """
 
     # Get list of created fragment directories
-    dir_list=(\$(echo ${outdir}/${sample_id}/Fragment*/))
+    dir_list=(\$(echo ${outdir}/${sample_id}/Fragment*))
 
-    count_index=0
-    for i in \${dir_list[@]}; do
+    echo "\${dir_list[@]}"
 
+    for i in "\${!dir_list[@]}"; do
+
+        echo \${dir_list[\$i]}
         # Make sure first consensus exists
-        if [ \${i} == "${outdir}/${sample_id}/barcode/" ]; then
-            !((count_index++))
+        if [ \${dir_list[\$i]} == "${outdir}/${sample_id}/barcode" ]; then
+            echo "barcode dir"
             continue
-        elif [ ! -f \${i}${sample_id}_*_firstConsensus.fasta ]; then 
-            echo "Could not build first consensus" > \${i}${sample_id}_\${count_index}_error.txt
-            pwd >> \${i}${sample_id}_\${count_index}_error.txt
-            !((count_index++))
+        elif [ ! -f \${dir_list[\$i]}/*firstConsensus.fasta ]; then 
+            echo "Could not build first consensus" > \${dir_list[\$i]}/${sample_id}_\${i}_error.txt
+            pwd >> \${dir_list[\$i]}/${sample_id}_\${i}_error.txt
+            echo "Could not build first consensus"
             continue
         fi
 
-        # Align only to filter reads
-        minimap2 -ax lr:hq \${i}${sample_id}_*_firstConsensus.fasta ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz > ${sample_id}_\${count_index}_IntermediateAlignment.sam
+        # Align to filter reads
+        minimap2 -ax lr:hq \${dir_list[\$i]}/*firstConsensus.fasta ${outdir}/${sample_id}/${sample_id}_filtered.fastq > ${sample_id}_\${i}_IntermediateAlignment.sam
         # Remove unaligned reads and filter for length
-        samtools view -e 'rlen>${min_read_length}' -bS -F 4 -O BAM -o ${sample_id}_\${count_index}_filtered.bam ${sample_id}_\${count_index}_IntermediateAlignment.sam
-        samtools fastq ${sample_id}_\${count_index}_filtered.bam > ${sample_id}_\${count_index}_filtered.fastq
-        cp ${sample_id}_\${count_index}_filtered.bam \${i}${sample_id}_filtered.bam
-        cp ${sample_id}_\${count_index}_filtered.fastq \${i}${sample_id}_filtered.fastq
+        samtools view -bS -F 4 -O BAM -o ${sample_id}_\${i}_filtered.bam ${sample_id}_\${i}_IntermediateAlignment.sam
+        samtools fastq ${sample_id}_\${i}_filtered.bam > ${sample_id}_\${i}_filtered.fastq
+        cp ${sample_id}_\${i}_filtered.bam \${dir_list[\$i]}/${sample_id}_filtered.bam
+        cp ${sample_id}_\${i}_filtered.fastq \${dir_list[\$i]}/${sample_id}_filtered.fastq
 
         # Rename contigs
-        python ${workflow.projectDir}/rename_contigs.py -i \${i}${sample_id}*firstConsensus.fasta -o \${i}${sample_id}_firstConsensus_renamed.fasta -b ${regions_bed}
+        python ${workflow.projectDir}/rename_contigs.py -i \${dir_list[\$i]}/${sample_id}*firstConsensus.fasta -o \${dir_list[\$i]}/${sample_id}_firstConsensus_renamed.fasta -b ${regions_bed}
 
         # Make sure fasta files have content
-        firstcon_length=\$(wc -l < \${i}${sample_id}*firstConsensus.fasta)
-        filtered_length=\$(wc -l < \${i}${sample_id}_filtered.fastq)
+        firstcon_length=\$(wc -l < \${dir_list[\$i]}/*firstConsensus.fasta)
+        filtered_length=\$(wc -l < \${dir_list[\$i]}/${sample_id}_filtered.fastq)
 
         # Check that first consensus has content
         if [ \$firstcon_length -lt 2 ]; then
-            echo "No reads aligned in first consensus" > \${i}${sample_id}_error.txt
+            echo "No reads aligned in first consensus" > \${dir_list[\$i]}/${sample_id}_error.txt
         # Check that some filtered reads passed
         elif [ \$filtered_length -lt 2 ]; then
-            echo "QC Fail - Possibly no long reads (length > ${min_read_length}) present" > \${i}${sample_id}_error.txt
+            echo "No reads aligned to region" > \${dir_list[\$i]}/${sample_id}_error.txt
         else
             # Align to first consensus, make new consensus
-            mini_align -i \${i}${sample_id}_filtered.fastq -r \${i}${sample_id}_firstConsensus_renamed.fasta -d lr:hq -m -t 4 -p secondAlign
+            echo "Building consensus"
+            mini_align -i \${dir_list[\$i]}/${sample_id}_filtered.fastq -r \${dir_list[\$i]}/${sample_id}_firstConsensus_renamed.fasta -d lr:hq -m -t 4 -p secondAlign
             medaka inference secondAlign.bam ${sample_id}.hdf --threads 2 --model r1041_e82_400bps_hac_v4.3.0
-            medaka sequence ${sample_id}.hdf \${i}${sample_id}_firstConsensus_renamed.fasta \${i}${sample_id}_realignment.fasta --threads 4
-            minimap2 -ax lr:hq \${i}${sample_id}_realignment.fasta \${i}${sample_id}_filtered.fastq > ${sample_id}_RVHaploinput.sam
+            medaka sequence ${sample_id}.hdf \${dir_list[\$i]}/${sample_id}_firstConsensus_renamed.fasta \${dir_list[\$i]}/${sample_id}_realignment.fasta --threads 4
+            minimap2 -ax lr:hq \${dir_list[\$i]}/${sample_id}_realignment.fasta \${dir_list[\$i]}/${sample_id}_filtered.fastq > ${sample_id}_RVHaploinput.sam
 
             # Run RVHaplo
+            echo "Haplotype discovery"
             RVHaploPath=${workflow.projectDir}"/rvhaplo.sh"
-            . "\${RVHaploPath}" -i ${sample_id}_RVHaploinput.sam -r \${i}${sample_id}_realignment.fasta \
-		        -o \${i} -p ${sample_id} -t 8 -e 0.1 \
-		        -sg $subgraphs -a $abundance -ss $smallest_snv;
+            ("\${RVHaploPath}" -i ${sample_id}_RVHaploinput.sam -r \${dir_list[\$i]}/${sample_id}_realignment.fasta -o \${dir_list[\$i]} -p ${sample_id} -t 8 -e 0.1 -sg $subgraphs -a $abundance -ss $smallest_snv)
+
+            echo "Finished "\${dir_list[\$i]}
         fi
-        !((count_index++))
+
     done
+
+    echo "Finished haplotype discovery for all regions"
 
     """
 }
@@ -277,8 +291,8 @@ workflow {
     
 
     concatenated = concatenateFastq(params.fastq_dir, rename_ch, params.outdir)
-    firstCon = firstConsensus(rename_ch, concatenated, params.reference, params.regions_bed, params.virus, params.outdir)
-    haplotypes(rename_ch, concatenated, firstCon, params.outdir, params.subgraphs, params.abundance, params.min_read_length, params.smallest_snv, params.regions_bed)
+    firstCon = firstConsensus(rename_ch, concatenated, params.reference, params.regions_bed, params.virus, params.outdir, params.min_read_length, params.min_depth)
+    haplotypes(rename_ch, concatenated, firstCon, params.outdir, params.subgraphs, params.abundance, params.smallest_snv, params.regions_bed)
     if (params.split_barcode)
         countBarcodes(rename_ch, concatenated, params.outdir)
 }
