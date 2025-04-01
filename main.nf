@@ -1,3 +1,4 @@
+// General parameters
 params.barcodes = "barcodes.txt"
 params.fastq_dir = ""
 params.regions_bed = "${workflow.projectDir}/ReferenceSequences/SIVregions_wBarcode.bed"
@@ -16,8 +17,8 @@ process concatenateFastq {
     
     executor 'local'
     // Conda not needed, but initialized now so that the next process doesn't time out while creating environment
-    conda "${workflow.projectDir}/rvhaplo.yaml"
-    //conda "/home/lzh8485/.conda/envs/rvhaplo"
+    //conda "${workflow.projectDir}/rvhaplo.yaml"
+    conda "/home/lzh8485/.conda/envs/rvhaplo"
 
     input:
     path fastq_dir
@@ -49,7 +50,10 @@ process concatenateFastq {
     elif [ -f ${fastq_dir}/${sample_id}.fastq.gz ]; then
         cat ${fastq_dir}/${sample_id}.fastq.gz > ${sample_id}_concatenated.fastq.gz;
     fi
-    cp ${sample_id}_concatenated.fastq.gz ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz
+    cp ${sample_id}_concatenated.fastq.gz ${outdir}/${sample_id}/
+    if [ ! -f ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz ]; then
+        exit 1
+    fi
 
     """
 
@@ -58,8 +62,8 @@ process concatenateFastq {
 process firstConsensus {
 
     executor 'slurm'
-    conda "${workflow.projectDir}/rvhaplo.yaml"
-    //conda "/home/lzh8485/.conda/envs/rvhaplo"
+    //conda "${workflow.projectDir}/rvhaplo.yaml"
+    conda "/home/lzh8485/.conda/envs/rvhaplo"
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 4
@@ -90,7 +94,7 @@ process firstConsensus {
     regions_array=(\$(awk '{ print \$4 }' $regions_bed))
 
     # Coverage of all regions
-    minimap2 -ax lr:hq $reference ${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz > full_genome.sam
+    minimap2 -ax lr:hq $reference ${sample_id}_concatenated.fastq.gz > full_genome.sam
     samtools view -e 'rlen>${min_read_length}' -bS -F 4 full_genome.sam > full_genome.bam
     samtools fastq full_genome.bam > ${outdir}/${sample_id}/${sample_id}_filtered.fastq
     samtools sort full_genome.bam > full_genome_sorted.bam
@@ -142,13 +146,13 @@ process firstConsensus {
 process haplotypes {
     
     executor 'slurm'
-    conda "${workflow.projectDir}/rvhaplo.yaml"
-    //conda "/home/lzh8485/.conda/envs/rvhaplo"
-    clusterOptions = '-A b1042'
-    queue = 'genomics'
-    cpus = 8
-    time = { 120.minute * task.attempt }
-    memory = { 60.GB + (50.GB * task.attempt) }
+    //conda "${workflow.projectDir}/rvhaplo.yaml"
+    conda "/home/lzh8485/.conda/envs/rvhaplo"
+    clusterOptions = '-A b1042 --gres=gpu:a100:1'
+    queue = 'genomics-gpu'
+    cpus = 4
+    time = { 60.minute * task.attempt }
+    memory = { 80.GB * task.attempt }
     errorStrategy 'retry'
     maxRetries 2
 
@@ -228,8 +232,8 @@ process haplotypes {
 process countBarcodes {
 
     executor 'slurm'
-    conda "${workflow.projectDir}/rvhaplo.yaml"
-    //conda "/home/lzh8485/.conda/envs/rvhaplo"
+    //conda "${workflow.projectDir}/rvhaplo.yaml"
+    conda "/home/lzh8485/.conda/envs/rvhaplo"
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 2
@@ -245,7 +249,9 @@ process countBarcodes {
 
     shell:
     """
-
+    if [ ! -d ${outdir}/${sample_id} ]; then
+        mkdir ${outdir}/${sample_id};
+    fi
     if [ ! -d ${outdir}/${sample_id}/barcode/ ]; then
         mkdir ${outdir}/${sample_id}/barcode/
     fi
