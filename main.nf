@@ -16,8 +16,8 @@ process concatenateFastq {
     
     executor 'local'
     // Conda not needed, but initialized now so that the next process doesn't time out while creating environment
-    //conda "${workflow.projectDir}/rvhaplo.yaml"
-    conda "/home/lzh8485/.conda/envs/rvhaplo"
+    conda "${workflow.projectDir}/rvhaplo.yaml"
+    //conda "/home/lzh8485/.conda/envs/rvhaplo"
 
     input:
     path fastq_dir
@@ -58,8 +58,8 @@ process concatenateFastq {
 process firstConsensus {
 
     executor 'slurm'
-    //conda "${workflow.projectDir}/rvhaplo.yaml"
-    conda "/home/lzh8485/.conda/envs/rvhaplo"
+    conda "${workflow.projectDir}/rvhaplo.yaml"
+    //conda "/home/lzh8485/.conda/envs/rvhaplo"
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 4
@@ -142,8 +142,8 @@ process firstConsensus {
 process haplotypes {
     
     executor 'slurm'
-    //conda "${workflow.projectDir}/rvhaplo.yaml"
-    conda "/home/lzh8485/.conda/envs/rvhaplo"
+    conda "${workflow.projectDir}/rvhaplo.yaml"
+    //conda "/home/lzh8485/.conda/envs/rvhaplo"
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 8
@@ -228,8 +228,8 @@ process haplotypes {
 process countBarcodes {
 
     executor 'slurm'
-    //conda "${workflow.projectDir}/rvhaplo.yaml"
-    conda "/home/lzh8485/.conda/envs/rvhaplo"
+    conda "${workflow.projectDir}/rvhaplo.yaml"
+    //conda "/home/lzh8485/.conda/envs/rvhaplo"
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 2
