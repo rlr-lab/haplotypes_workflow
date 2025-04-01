@@ -148,7 +148,7 @@ process haplotypes {
     queue = 'genomics'
     cpus = 8
     time = { 120.minute * task.attempt }
-    memory = { 60.GB + (60.GB * task.attempt) }
+    memory = { 60.GB + (50.GB * task.attempt) }
     errorStrategy 'retry'
     maxRetries 2
 
@@ -166,7 +166,7 @@ process haplotypes {
     """
 
     # Get list of created fragment directories
-    dir_list=(\$(echo ${outdir}/${sample_id}/Fragment*))
+    dir_list=(\$(ls ${outdir}/${sample_id}/ | grep Fragment))
 
     echo "\${dir_list[@]}"
 
@@ -174,49 +174,46 @@ process haplotypes {
 
         echo \${dir_list[\$i]}
         # Make sure first consensus exists
-        if [ \${dir_list[\$i]} == "${outdir}/${sample_id}/barcode" ]; then
-            echo "barcode dir"
-            continue
-        elif [ ! -f \${dir_list[\$i]}/*firstConsensus.fasta ]; then 
-            echo "Could not build first consensus" > \${dir_list[\$i]}/${sample_id}_\${i}_error.txt
-            pwd >> \${dir_list[\$i]}/${sample_id}_\${i}_error.txt
+        if [ ! -f ${outdir}/${sample_id}/\${dir_list[\$i]}/*firstConsensus.fasta ]; then 
+            echo "Could not build first consensus" > ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_\${i}_error.txt
+            pwd >> ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_\${i}_error.txt
             echo "Could not build first consensus"
             continue
         fi
 
         # Align to filter reads
-        minimap2 -ax lr:hq \${dir_list[\$i]}/*firstConsensus.fasta ${outdir}/${sample_id}/${sample_id}_filtered.fastq > ${sample_id}_\${i}_IntermediateAlignment.sam
+        minimap2 -ax lr:hq ${outdir}/${sample_id}/\${dir_list[\$i]}/*firstConsensus.fasta ${outdir}/${sample_id}/${sample_id}_filtered.fastq > ${sample_id}_\${i}_IntermediateAlignment.sam
         # Remove unaligned reads and filter for length
         samtools view -bS -F 4 -O BAM -o ${sample_id}_\${i}_filtered.bam ${sample_id}_\${i}_IntermediateAlignment.sam
         samtools fastq ${sample_id}_\${i}_filtered.bam > ${sample_id}_\${i}_filtered.fastq
-        cp ${sample_id}_\${i}_filtered.bam \${dir_list[\$i]}/${sample_id}_filtered.bam
-        cp ${sample_id}_\${i}_filtered.fastq \${dir_list[\$i]}/${sample_id}_filtered.fastq
+        cp ${sample_id}_\${i}_filtered.bam ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_filtered.bam
+        cp ${sample_id}_\${i}_filtered.fastq ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_filtered.fastq
 
         # Rename contigs
-        python ${workflow.projectDir}/rename_contigs.py -i \${dir_list[\$i]}/${sample_id}*firstConsensus.fasta -o \${dir_list[\$i]}/${sample_id}_firstConsensus_renamed.fasta -b ${regions_bed}
+        python ${workflow.projectDir}/rename_contigs.py -i ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}*firstConsensus.fasta -o ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_firstConsensus_renamed.fasta -b ${regions_bed}
 
         # Make sure fasta files have content
-        firstcon_length=\$(wc -l < \${dir_list[\$i]}/*firstConsensus.fasta)
-        filtered_length=\$(wc -l < \${dir_list[\$i]}/${sample_id}_filtered.fastq)
+        firstcon_length=\$(wc -l < ${outdir}/${sample_id}/\${dir_list[\$i]}/*firstConsensus.fasta)
+        filtered_length=\$(wc -l < ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_filtered.fastq)
 
         # Check that first consensus has content
         if [ \$firstcon_length -lt 2 ]; then
-            echo "No reads aligned in first consensus" > \${dir_list[\$i]}/${sample_id}_error.txt
+            echo "No reads aligned in first consensus" > ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_error.txt
         # Check that some filtered reads passed
         elif [ \$filtered_length -lt 2 ]; then
-            echo "No reads aligned to region" > \${dir_list[\$i]}/${sample_id}_error.txt
+            echo "No reads aligned to region" > ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_error.txt
         else
             # Align to first consensus, make new consensus
             echo "Building consensus"
-            mini_align -i \${dir_list[\$i]}/${sample_id}_filtered.fastq -r \${dir_list[\$i]}/${sample_id}_firstConsensus_renamed.fasta -d lr:hq -m -t 4 -p secondAlign
+            mini_align -i ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_filtered.fastq -r ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_firstConsensus_renamed.fasta -d lr:hq -m -t 4 -p secondAlign
             medaka inference secondAlign.bam ${sample_id}.hdf --threads 2 --model r1041_e82_400bps_hac_v4.3.0
-            medaka sequence ${sample_id}.hdf \${dir_list[\$i]}/${sample_id}_firstConsensus_renamed.fasta \${dir_list[\$i]}/${sample_id}_realignment.fasta --threads 4
-            minimap2 -ax lr:hq \${dir_list[\$i]}/${sample_id}_realignment.fasta \${dir_list[\$i]}/${sample_id}_filtered.fastq > ${sample_id}_RVHaploinput.sam
+            medaka sequence ${sample_id}.hdf ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_firstConsensus_renamed.fasta ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_realignment.fasta --threads 4
+            minimap2 -ax lr:hq ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_realignment.fasta ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_filtered.fastq > ${sample_id}_RVHaploinput.sam
 
             # Run RVHaplo
             echo "Haplotype discovery"
             RVHaploPath=${workflow.projectDir}"/rvhaplo.sh"
-            ("\${RVHaploPath}" -i ${sample_id}_RVHaploinput.sam -r \${dir_list[\$i]}/${sample_id}_realignment.fasta -o \${dir_list[\$i]} -p ${sample_id} -t 8 -e 0.1 -sg $subgraphs -a $abundance -ss $smallest_snv)
+            ("\${RVHaploPath}" -i ${sample_id}_RVHaploinput.sam -r ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_realignment.fasta -o ${outdir}/${sample_id}/\${dir_list[\$i]} -p ${sample_id} -t 8 -e 0.1 -sg $subgraphs -a $abundance -ss $smallest_snv)
 
             echo "Finished "\${dir_list[\$i]}
         fi
