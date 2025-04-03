@@ -8,6 +8,7 @@ params.virus = "SIV"
 params.min_read_length = 1200
 params.min_depth = 1000
 params.split_barcode = false
+params.gpu = false
 // RVHaplo parameters
 params.subgraphs = 1
 params.abundance = 0.001
@@ -17,13 +18,18 @@ process concatenateFastq {
     
     executor 'local'
     // Conda not needed, but initialized now so that the next process doesn't time out while creating environment
-    //conda "${workflow.projectDir}/rvhaplo.yaml"
-    conda "/home/lzh8485/.conda/envs/rvhaplo"
+    if(params.gpu) {
+        conda "${workflow.projectDir}/rvhaplo.yaml"
+    }
+    else {
+        conda "${workflow.projectDir}/rvhaplo-cpu.yaml"
+    }
 
     input:
     path fastq_dir
     tuple val(barcode), val(sample_id)
     val outdir
+    val gpu
     errorStrategy 'retry'
     maxRetries 2
 
@@ -62,10 +68,16 @@ process concatenateFastq {
 process firstConsensus {
 
     executor 'slurm'
-    //conda "${workflow.projectDir}/rvhaplo.yaml"
-    conda "/home/lzh8485/.conda/envs/rvhaplo"
-    clusterOptions = '-A b1042'
-    queue = 'genomics'
+    if(params.gpu) {
+        conda "${workflow.projectDir}/rvhaplo.yaml"
+        clusterOptions = '-A b1042 --gres=gpu:a100:1'
+        queue = 'genomics-gpu'
+    }
+    else {
+        conda "${workflow.projectDir}/rvhaplo-cpu.yaml"
+        clusterOptions = '-A b1042'
+        queue = 'genomics'
+    }
     cpus = 4
     time = { 20.minute * task.attempt}
     memory = { 8.GB * task.attempt}
@@ -82,6 +94,7 @@ process firstConsensus {
     path outdir
     val min_read_length
     val min_depth
+    val gpu
 
     output:
     //path "${outdir}/${sample_id}/coverage.txt"
@@ -135,6 +148,7 @@ process firstConsensus {
         if [ ! -f ${outdir}/${sample_id}/\${i}/${sample_id}_\${i}_firstConsensus.fasta ]; then 
             echo "Could not build first consensus" >> $outdir/$sample_id/\${i}/${sample_id}_error.txt
             pwd >> ${outdir}/${sample_id}/\${i}/${sample_id}_error.txt
+            echo "Could not build first consensus" > ${sample_id}_\${i}_firstConsensus.fasta
             continue
         fi
         let "count_index+=1"
@@ -146,13 +160,22 @@ process firstConsensus {
 process haplotypes {
     
     executor 'slurm'
-    //conda "${workflow.projectDir}/rvhaplo.yaml"
-    conda "/home/lzh8485/.conda/envs/rvhaplo"
-    clusterOptions = '-A b1042 --gres=gpu:a100:1'
-    queue = 'genomics-gpu'
-    cpus = 4
-    time = { 60.minute * task.attempt }
-    memory = { 80.GB * task.attempt }
+    if(params.gpu) {
+        conda "${workflow.projectDir}/rvhaplo.yaml"
+        clusterOptions = '-A b1042 --gres=gpu:a100:1'
+        queue = 'genomics-gpu'
+        cpus = 2
+        time = { 60.minute * task.attempt }
+        memory = { 40.GB * task.attempt }
+    }
+    else {
+        conda "${workflow.projectDir}/rvhaplo-cpu.yaml"
+        clusterOptions = '-A b1042'
+        queue = 'genomics'
+        cpus = 4
+        time = { 120.minute * task.attempt }
+        memory = { 70.GB * task.attempt }
+    }
     errorStrategy 'retry'
     maxRetries 2
 
@@ -165,6 +188,7 @@ process haplotypes {
     val abundance
     val smallest_snv
     path regions_bed
+    val gpu
 
     shell:
     """
@@ -179,6 +203,15 @@ process haplotypes {
         echo \${dir_list[\$i]}
         # Make sure first consensus exists
         if [ ! -f ${outdir}/${sample_id}/\${dir_list[\$i]}/*firstConsensus.fasta ]; then 
+            echo "Could not build first consensus" > ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_\${i}_error.txt
+            pwd >> ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_\${i}_error.txt
+            echo "Could not build first consensus"
+            continue
+        fi
+
+        # Test that fasta isn't just an error message
+        line=\$(head -n 1 ${outdir}/${sample_id}/\${dir_list[\$i]}/*firstConsensus.fasta)
+        if [ \$line == "Could not build first consensus" ]; then
             echo "Could not build first consensus" > ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_\${i}_error.txt
             pwd >> ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_\${i}_error.txt
             echo "Could not build first consensus"
@@ -232,8 +265,12 @@ process haplotypes {
 process countBarcodes {
 
     executor 'slurm'
-    //conda "${workflow.projectDir}/rvhaplo.yaml"
-    conda "/home/lzh8485/.conda/envs/rvhaplo"
+    if(params.gpu) {
+        conda "${workflow.projectDir}/rvhaplo.yaml"
+    }
+    else {
+        conda "${workflow.projectDir}/rvhaplo-cpu.yaml"
+    }
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 2
@@ -246,6 +283,7 @@ process countBarcodes {
     tuple val(barcode), val(sample_id)
     path "${sample_id}_concatenated.fastq.gz"
     path outdir
+    val gpu
 
     shell:
     """
@@ -293,9 +331,9 @@ workflow {
     barcode_ch.join(sample_ch).combine(fragment_ch).transpose(remainder: true).set {final_fragment_ch}
     
 
-    concatenated = concatenateFastq(params.fastq_dir, rename_ch, params.outdir)
-    firstCon = firstConsensus(rename_ch, concatenated, params.reference, params.regions_bed, params.virus, params.outdir, params.min_read_length, params.min_depth)
-    haplotypes(rename_ch, concatenated, firstCon, params.outdir, params.subgraphs, params.abundance, params.smallest_snv, params.regions_bed)
+    concatenated = concatenateFastq(params.fastq_dir, rename_ch, params.outdir, params.gpu)
+    firstCon = firstConsensus(rename_ch, concatenated, params.reference, params.regions_bed, params.virus, params.outdir, params.min_read_length, params.min_depth, params.gpu)
+    haplotypes(rename_ch, concatenated, firstCon, params.outdir, params.subgraphs, params.abundance, params.smallest_snv, params.regions_bed, params.gpu)
     if (params.split_barcode)
-        countBarcodes(rename_ch, concatenated, params.outdir)
+        countBarcodes(rename_ch, concatenated, params.outdir, params.gpu)
 }
