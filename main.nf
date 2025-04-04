@@ -246,6 +246,7 @@ process haplotypes {
             medaka inference secondAlign.bam ${sample_id}.hdf --threads 2 --model r1041_e82_400bps_hac_v4.3.0
             medaka sequence ${sample_id}.hdf ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_firstConsensus_renamed.fasta ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_realignment.fasta --threads 4
             minimap2 -ax lr:hq ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_realignment.fasta ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_filtered.fastq > ${sample_id}_RVHaploinput.sam
+            rm ${outdir}/${sample_id}/\${dir_list[\$i]}/*.mmi
 
             # Run RVHaplo
             echo "Haplotype discovery"

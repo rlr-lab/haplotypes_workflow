@@ -468,6 +468,7 @@ if (( $size != 0 ));then
 	python ${workflow_path}/RVHaplo/out_haplotypes.py $file_prefix"_clusters.pickle" $file_bam_sorted $file_path $file_acgt 1 $file_prefix"_consensus.fasta" $s_pos $e_pos $workflow_path
 	python ${workflow_path}/RVHaplo/extract_reads.py $file_path $prefix 1
 	python ${workflow_path}/RVHaplo/run_medaka.py $file_path $prefix 1
+	rm -rf $file_path"/medaka"
 	exit 0
 fi
 
@@ -482,6 +483,7 @@ if (( $size != 0 ));then
 	python ${workflow_path}/RVHaplo/out_haplotypes.py $file_prefix"_clusters.pickle" $file_bam_sorted $file_path $file_acgt 1 $file_prefix"_consensus.fasta" $s_pos $e_pos $workflow_path
 	python ${workflow_path}/RVHaplo/extract_reads.py $file_path $prefix 1
 	python ${workflow_path}/RVHaplo/run_medaka.py $file_path $prefix 1
+	rm -rf $file_path"/medaka"
 	exit 0
 fi
 
