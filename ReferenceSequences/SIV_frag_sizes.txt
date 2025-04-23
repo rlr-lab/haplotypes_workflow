@@ -1,0 +1,6 @@
+Fragment_1	2087
+Fragment_2	2024
+Fragment_3	2608
+Fragment_4	1813
+Fragment_5	2049
+FL	10000
