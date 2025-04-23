@@ -18,18 +18,12 @@ process concatenateFastq {
     
     executor 'local'
     // Conda not needed, but initialized now so that the next process doesn't time out while creating environment
-    if(params.gpu) {
-        conda "${workflow.projectDir}/rvhaplo.yaml"
-    }
-    else {
-        conda "${workflow.projectDir}/rvhaplo-cpu.yaml"
-    }
+    conda "${workflow.projectDir}/medaka.yaml"
 
     input:
     path fastq_dir
-    tuple val(barcode), val(sample_id)
+    tuple val(barcode), val(sample_id), val(fragments)
     val outdir
-    val gpu
     errorStrategy 'retry'
     maxRetries 2
 
@@ -52,6 +46,7 @@ process concatenateFastq {
 
     # Either concatenate all fastqs in a folder or just take the one
     if [ -d ${fastq_dir}/${barcode} ]; then
+        echo "Concatenating fastq files..."
         cat ${fastq_dir}/${barcode}/*.fastq.gz > ${sample_id}_concatenated.fastq.gz;
     elif [ -f ${fastq_dir}/${sample_id}.fastq.gz ]; then
         cat ${fastq_dir}/${sample_id}.fastq.gz > ${sample_id}_concatenated.fastq.gz;
@@ -61,6 +56,343 @@ process concatenateFastq {
         exit 1
     fi
 
+    """
+
+}
+
+process qualityFilter {
+
+    executor 'slurm'
+    conda "${workflow.projectDir}/medaka.yaml"
+    clusterOptions = '-A b1042'
+    queue = 'genomics'
+    cpus = 1
+    time = { 45.minute * task.attempt}
+    memory = { 4.GB * task.attempt}
+    errorStrategy 'retry'
+    maxRetries 2
+
+    input:
+    tuple val(barcode), val(sample_id), val(fragments)
+    path "${sample_id}_concatenated.fastq.gz"
+    val outdir
+
+    output:
+    path "${sample_id}_filtered.fastq.gz"
+
+    shell:
+    """
+    # Split processing by fragment
+    frags=(${fragments})
+    for i in \${frags[@]}; do
+        echo "Processing \${i}..."
+        # Create a file for each fragment
+        mkdir -p "${outdir}/${sample_id}/\$i"
+        length=\$(awk -v pat=\$i '\$1 == pat {print \$2}' "${workflow.projectDir}/ReferenceSequences/SIV_frag_sizes.txt")
+        fastplong \
+            -i "${sample_id}_concatenated.fastq.gz" \
+            -o "${sample_id}_filtered.fastq.gz" \
+            --qualified_quality_phred 15 \
+            --length_required \$((\${length} - 100)) \
+            --length_limit \$((\${length} + 100)) \
+            --adapter_fasta "${workflow.projectDir}/ReferenceSequences/SIVprimers.fasta" \
+            --thread 4 \
+            --html "${sample_id}_fastp_report.html" \
+            --json "${sample_id}_fastp_report.json"
+        echo "Finished filtering"
+        echo "Moving files..."
+        mkdir -p "${outdir}/${sample_id}/\$i/fastplong"
+        cp "${sample_id}_filtered.fastq.gz" "${outdir}/${sample_id}/\$i/fastplong/"
+        cp "${sample_id}_fastp_report.html" "${outdir}/${sample_id}/\$i/fastplong/"
+        cp "${sample_id}_fastp_report.json" "${outdir}/${sample_id}/\$i/fastplong/"
+    done
+
+    """
+}
+
+process flyeAssembly {
+
+    executor 'slurm'
+    conda "${workflow.projectDir}/medaka.yaml"
+    clusterOptions = '-A b1042'
+    queue = 'genomics'
+    cpus = 4
+    time = { 15.minute * task.attempt}
+    memory = { 8.GB * task.attempt}
+    errorStrategy 'retry'
+    maxRetries 2
+
+    input:
+    tuple val(barcode), val(sample_id), val(fragments)
+    path "${sample_id}_filtered.fastq.gz"
+    val outdir
+
+    output:
+    path "flye_out/assembly.fasta"
+    
+    shell:
+    """
+    frags=(${fragments})
+    for i in \${frags[@]}; do
+        echo "Processing \${i}..."
+        length=\$(awk -v pat=\$i '\$1 == pat {print \$2}' "${workflow.projectDir}/ReferenceSequences/SIV_frag_sizes.txt")
+        flye \
+            --nano-raw "${outdir}/${sample_id}/\$i/fastplong/${sample_id}_filtered.fastq.gz" \
+            --out-dir flye_out \
+            --genome-size \${length} \
+            --min-overlap 1000 \
+            --asm-coverage 50 \
+            --iterations 5 \
+            --no-alt-contigs \
+            --threads 8
+        cp -r flye_out/ ${outdir}/${sample_id}/\$i
+    done
+    """
+
+}
+
+process cleanContigs {
+
+    executor 'slurm'
+    conda "${workflow.projectDir}/medaka.yaml"
+    clusterOptions = '-A b1042'
+    queue = 'genomics'
+    cpus = 1
+    time = { 5.minute * task.attempt}
+    memory = { 8.GB * task.attempt}
+    errorStrategy 'retry'
+    maxRetries 2
+
+    input:
+    tuple val(barcode), val(sample_id), val(fragments)
+    path "flye_out/assembly.fasta"
+    path reference
+    path regions_bed
+    val outdir
+
+    output:
+    path "${sample_id}_assembly.fasta"
+    
+    shell:
+    """
+    frags=(${fragments})
+
+    # Split reference into separate contigs
+    seqtk subseq ${reference} ${regions_bed} > reference_contigs.fasta
+    python ${workflow.projectDir}/rename_contigs.py -i reference_contigs.fasta -o renamed_contigs.fasta -b ${regions_bed}
+    
+
+    for i in \${frags[@]}; do
+        echo "Processing \${i}..."
+        echo "\$i" > frags.txt
+        seqtk subseq renamed_contigs.fasta frags.txt > ref.fasta
+        python "${workflow.projectDir}/reorder_contigs.py" \
+            -r ref.fasta \
+            -a "${outdir}/${sample_id}/\$i/flye_out/assembly.fasta" \
+            -o "${sample_id}_assembly.fasta" \
+            --concat
+        cp "${sample_id}_assembly.fasta" "${outdir}/${sample_id}/\$i/"
+    done
+    """
+}
+
+process polishAssembly {
+
+    executor 'slurm'
+    if(params.gpu) {
+        conda "${workflow.projectDir}/medaka.yaml"
+        clusterOptions = '-A b1042 --gres=gpu:a100:1'
+        queue = 'genomics-gpu'
+    }
+    else {
+        conda "${workflow.projectDir}/medaka.yaml"
+        clusterOptions = '-A b1042'
+        queue = 'genomics'
+    }
+    cpus = 4
+    time = { 30.minute * task.attempt}
+    memory = { 16.GB * task.attempt}
+    errorStrategy 'retry'
+    maxRetries 2
+
+    input:
+    tuple val(barcode), val(sample_id), val(fragments)
+    path "${sample_id}_assembly.fasta"
+    path "${sample_id}_filtered.fastq.gz"
+    val outdir
+    val gpu
+
+    output:
+    path "medaka_out/consensus.fasta"
+
+    shell:
+    """
+    frags=(${fragments})
+    for i in \${frags[@]}; do
+        echo "Processing \${i}..."
+        medaka_consensus \
+            -i "${outdir}/${sample_id}/\$i/fastplong/${sample_id}_filtered.fastq.gz" \
+            -d "${outdir}/${sample_id}/\$i/${sample_id}_assembly.fasta" \
+            -m r1041_e82_400bps_sup_v5.0.0 \
+            -o medaka_out \
+            -t 8
+        cp medaka_out/consensus.fasta "${outdir}/${sample_id}/\$i/${sample_id}_consensus.fasta"
+    done
+    """
+
+}
+
+process alignReads {
+
+    executor 'slurm'
+    conda "${workflow.projectDir}/medaka.yaml"
+    clusterOptions = '-A b1042'
+    queue = 'genomics'
+    cpus = 4
+    time = { 10.minute * task.attempt}
+    memory = { 16.GB * task.attempt}
+    errorStrategy 'retry'
+    maxRetries 2
+
+    input:
+    tuple val(barcode), val(sample_id), val(fragments)
+    path "medaka_out/consensus.fasta"
+    path "${sample_id}_filtered.fastq.gz"
+    val outdir
+
+    output:
+    path "${sample_id}_aligned.bam"
+    path "${sample_id}_aligned.bam.bai"
+
+    shell:
+    """
+    frags=(${fragments})
+    
+    for i in \${frags[@]}; do
+        echo "Processing \${i}..."
+        minimap2 -ax lr:hq "${outdir}/${sample_id}/\$i/${sample_id}_consensus.fasta" "${outdir}/${sample_id}/\$i/fastplong/${sample_id}_filtered.fastq.gz" | \
+            samtools sort -o "${sample_id}_aligned.bam"
+        samtools index "${sample_id}_aligned.bam"
+        cp "${sample_id}_aligned.bam" "${outdir}/${sample_id}/\$i/"
+        cp "${sample_id}_aligned.bam.bai" "${outdir}/${sample_id}/\$i/"
+    done
+    """
+
+}
+
+process trimConsensus {
+
+    executor 'slurm'
+    conda "${workflow.projectDir}/medaka.yaml"
+    clusterOptions = '-A b1042'
+    queue = 'genomics'
+    cpus = 1
+    time = { 5.minute * task.attempt}
+    memory = { 8.GB * task.attempt}
+    errorStrategy 'retry'
+    maxRetries 2
+
+    input:
+    tuple val(barcode), val(sample_id), val(fragments)
+    path "medaka_out/consensus.fasta"
+    path "${sample_id}_aligned.bam"
+    path "${sample_id}_aligned.bam.bai"
+    val outdir
+
+    output:
+    path "${sample_id}_consensus_trimmed.fasta"
+    path "${sample_id}_aligned.bam"
+    path "${sample_id}_aligned.bam.bai"
+    
+    shell:
+    """
+    frags=(${fragments})
+
+    for i in \${frags[@]}; do
+
+        echo "Trimming \${i}..."
+        python "${workflow.projectDir}/trim_contigs_by_depth.py" \
+            -f "${outdir}/${sample_id}/\$i/${sample_id}_consensus.fasta" \
+            -b "${outdir}/${sample_id}/\$i/${sample_id}_aligned.bam" \
+            -o "${sample_id}_consensus_trimmed.fasta" \
+            -d 1200
+        cp "${sample_id}_consensus_trimmed.fasta" "${outdir}/${sample_id}/\$i/"
+
+        echo "Realigning \${i}..."
+        minimap2 -ax lr:hq "${sample_id}_consensus_trimmed.fasta" "${outdir}/${sample_id}/\$i/fastplong/${sample_id}_filtered.fastq.gz" | \
+            samtools sort -o "${sample_id}_aligned.bam"
+        samtools index "${sample_id}_aligned.bam"
+        cp "${sample_id}_aligned.bam" "${outdir}/${sample_id}/\$i/"
+        cp "${sample_id}_aligned.bam.bai" "${outdir}/${sample_id}/\$i/"
+
+    done
+    """
+
+}
+
+process haplotypes {
+
+    executor 'slurm'
+    conda "${workflow.projectDir}/medaka.yaml"
+    clusterOptions = '-A b1042'
+    queue = 'genomics'
+    cpus = 4
+    time = { 10.minute * task.attempt}
+    memory = { 16.GB * task.attempt}
+    errorStrategy 'retry'
+    maxRetries 2
+
+    input:
+    tuple val(barcode), val(sample_id), val(fragments)
+    path "${sample_id}_consensus_trimmed.fasta"
+    path("${sample_id}_aligned.bam")
+    path("${sample_id}_aligned.bam.bai")
+    path reference
+    path regions_bed
+    val outdir
+    val virus
+
+    output:
+    path "read_counts.txt"
+
+    shell:
+    """
+    frags=(${fragments})
+    for i in \${frags[@]}; do
+        echo "Processing \${i}..."
+#        if [ ${virus} == "SIV" ] && [ \$i == "Fragment_3" ]; then
+            # Split reference into separate contigs
+#            echo "Splitting Fragment 3"
+#            seqtk subseq ${reference} ${regions_bed} > reference_contigs.fasta
+#            python ${workflow.projectDir}/rename_contigs.py -i reference_contigs.fasta -o renamed_contigs.fasta -b ${regions_bed}
+#            for j in Fragment_3.1 Fragment_3.2; do
+#                echo "Processing \${j}..."
+#                echo "\$j" > frags.txt
+#                seqtk subseq renamed_contigs.fasta frags.txt > ref.fasta
+#
+                # Count each 'haplotype'
+#                python "${workflow.projectDir}/contig_read_counter.py" "${outdir}/${sample_id}/\$i/${sample_id}_aligned.bam" \
+#                    --output-bam "${sample_id}_filtered.bam" \
+#                    --count-output "read_counts_\${j}.txt"
+#
+#                # Get depth at each base along the consensus sequence
+#                samtools sort "${sample_id}_filtered.bam" > "${sample_id}_filtered_sorted.bam"
+#                samtools index "${sample_id}_filtered_sorted.bam"
+#                samtools depth -a -@ 4 "${sample_id}_filtered_sorted.bam" > "${outdir}/${sample_id}/\$i/base_depth_\$j.txt"
+#
+#                cp "read_counts_\${j}.txt" "${outdir}/${sample_id}/\$i/"
+#                # Add to make sure process completes correctly
+#                cat "read_counts_\${j}.txt" >> read_counts.txt
+#            done
+#
+#        else
+
+            # Count each 'haplotype'
+            python "${workflow.projectDir}/contig_read_counter.py" "${outdir}/${sample_id}/\$i/${sample_id}_aligned.bam" --output-bam "${sample_id}_filtered.bam"
+
+            cp "read_counts.txt" "${outdir}/${sample_id}/\$i/"
+#        fi
+    done
     """
 
 }
@@ -157,7 +489,7 @@ process firstConsensus {
     """
 }
 
-process haplotypes {
+process rvhaplo {
     
     executor 'slurm'
     if(params.gpu) {
@@ -308,33 +640,22 @@ process countBarcodes {
 
 workflow {
     
-    def bedfile = new File(params.regions_bed)
-    def bed_rows = bedfile.readLines()*.split('	')
-    Set regions = bed_rows*.getAt(3)
     Channel
-        .fromList(regions)
-        .set {fragment_ch}
+        .fromPath(params.barcodes, checkIfExists: true, type: 'file')
+        .splitCsv()
+        .set {barcodes_ch}
 
+    concatenated = concatenateFastq(params.fastq_dir, barcodes_ch, params.outdir)
+    quality = qualityFilter(barcodes_ch, concatenated, params.outdir)
+    flye = flyeAssembly(barcodes_ch, quality, params.outdir)
+    cleaned = cleanContigs(barcodes_ch, flye, params.reference, params.regions_bed, params.outdir)
+    polished = polishAssembly(barcodes_ch, cleaned, quality, params.outdir, params.gpu)
+    aligned = alignReads(barcodes_ch, polished, quality, params.outdir)
+    trimmed = trimConsensus(barcodes_ch, polished, aligned, params.outdir)
+    haplotypes(barcodes_ch, trimmed, params.reference, params.regions_bed, params.outdir, params.virus)
 
-    def barcode_file = new File(params.barcodes)
-    def barcode_rows = barcode_file.readLines()*.split(',')
-    Set barcode_name = barcode_rows*.getAt(0)
-    Channel
-        .fromList(barcode_name)
-        .set {barcode_ch}
-
-    Set sample_names = barcode_rows*.getAt([0,1])
-    Channel
-        .fromList(sample_names)
-        .set {sample_ch}
-
-    barcode_ch.join(sample_ch).set {rename_ch}
-    barcode_ch.join(sample_ch).combine(fragment_ch).transpose(remainder: true).set {final_fragment_ch}
-    
-
-    concatenated = concatenateFastq(params.fastq_dir, rename_ch, params.outdir, params.gpu)
-    firstCon = firstConsensus(rename_ch, concatenated, params.reference, params.regions_bed, params.virus, params.outdir, params.min_read_length, params.min_depth, params.gpu)
-    haplotypes(rename_ch, concatenated, firstCon, params.outdir, params.subgraphs, params.abundance, params.smallest_snv, params.regions_bed, params.gpu)
-    if (params.split_barcode)
-        countBarcodes(rename_ch, concatenated, params.outdir, params.gpu)
+    //firstCon = firstConsensus(barcodes_ch, concatenated, params.reference, params.regions_bed, params.virus, params.outdir, params.min_read_length, params.min_depth, params.gpu)
+    //haplotypes(barcodes_ch, concatenated, firstCon, params.outdir, params.subgraphs, params.abundance, params.smallest_snv, params.regions_bed, params.gpu)
+    //if (params.split_barcode)
+    //    countBarcodes(barcodes_ch, concatenated, params.outdir, params.gpu)
 }
