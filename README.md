@@ -34,7 +34,6 @@ barcode02,SAMPLE002,"FL"
   - `SIVMac239FullGenome_wBarcode.fas`
   - `SIVregions_wBarcode.bed`
   - `SIVprimers.fasta`
-  - `SIV_frag_sizes.txt`
   - `barcode_reference.fas`
 
 ---
@@ -87,7 +86,7 @@ Defined at the top of the Nextflow script or passed via `-params-file`.
 | `params.min_read_length` | Minimum read length to retain | `-1` (auto) |
 | `params.max_read_length` | Maximum read length to retain | `-1` (auto) |
 | `params.min_depth` | Minimum coverage depth for consensus | `1000` |
-| `params.count_barcodes` | Enable barcode split logic | `false` |
+| `params.count_barcodes` | Enable barcode count logic | `false` |
 | `params.gpu` | Use GPU for Medaka polishing | `false` |
 
 ---
