@@ -1,83 +1,164 @@
-# Haplotypes workflow
+# SIV Tiled Amplicon Assembly Pipeline
 
-## Clone repository
+This Nextflow pipeline processes SIV tiled amplicon sequencing data from raw FASTQ files to high-quality consensus sequences. It includes quality filtering, de novo assembly, polishing, trimming, haplotype reconstruction, and optional barcode counting.
 
-```shell
-git clone https://github.com/rlr-lab/haplotypes_workflow.git
-cd haplotypes_workflow
+---
+
+## Input Requirements
+
+### 1. FASTQ Files
+
+- Raw reads from nanopore sequencing (single or multiple `.fastq.gz` files per sample).
+- Organized either in subfolders named by barcode or as single files named with the sample ID.
+
+### 2. Barcode Information File (`barcodes.txt`)
+
+A CSV with **no header**, containing:
+
+```{text}
+barcode,sample_id,fragments
 ```
 
-## On Quest - activate Nextflow module
+Example:
 
-```shell
-module purge all
-# Version 24.04.4 is currently the most recent available on Quest
-module load nextflow/24.04.4
-nextflow run main.nf [options]
+```{text}
+barcode01,SAMPLE001,"Fragment_1 Fragment_2 Fragment_3"
+barcode02,SAMPLE002,"FL"
 ```
 
-An alternative option is to use a conda environment instead of a pre-installed module. This allows the program to run on other HPC systems besides Northwestern's Quest HPC.
+### 3. Reference Data
 
-```shell
-mamba create -n nextflow nextflow
-mamba activate nextflow
+- Full genome reference FASTA with "barcode" region included.
+- BED file specifying region coordinates (used to break reference into expected contigs).
+- Additional resources in `ReferenceSequences/`:
+  - `SIVMac239FullGenome_wBarcode.fas`
+  - `SIVregions_wBarcode.bed`
+  - `SIVprimers.fasta`
+  - `SIV_frag_sizes.txt`
+  - `barcode_reference.fas`
+
+---
+
+## Pipeline Steps
+
+1. **Concatenate FASTQ**
+   - Merges multiple read files per sample or uses a single file if available.
+
+2. **Quality Filtering**
+   - Filters reads using `fastplong` based on quality and expected fragment sizes.
+
+3. **Assembly (Flye)**
+   - De novo assembly for each fragment using `flye`.
+   - Falls back to using the reference if assembly fails.
+
+4. **Contig Cleanup**
+   - Reorders and renames contigs to match reference fragment order.
+
+5. **Polishing**
+   - Polishes assemblies using `medaka` (GPU support available).
+
+6. **Read Alignment**
+   - Aligns reads back to polished consensus using `minimap2` and `samtools`.
+
+7. **Consensus Trimming**
+   - Trims consensus sequences by coverage depth.
+   - Special handling for `Fragment_3` in SIV (splits at barcode).
+
+8. **Haplotype Analysis**
+   - Counts reads per haplotype using a custom script.
+
+9. **Barcode Counting** *(Optional)*
+   - Aligns to barcode reference and counts barcodes using a Perl script.
+
+---
+
+## Configuration Parameters
+
+Defined at the top of the Nextflow script or passed via `-params-file`.
+
+| Parameter | Description | Default |
+|----------|-------------|---------|
+| `params.barcodes` | Path to barcode/sample info file | `"barcodes.txt"` |
+| `params.fastq_dir` | Path to directory of FASTQ files | `""` |
+| `params.regions_bed` | BED file of region coordinates | `ReferenceSequences/SIVregions_wBarcode.bed` |
+| `params.reference` | Full genome reference FASTA | `ReferenceSequences/SIVMac239FullGenome_wBarcode.fas` |
+| `params.outdir` | Output directory | `nf-results/` |
+| `params.virus` | Virus name, affects trimming logic | `"SIV"` |
+| `params.min_read_length` | Minimum read length to retain | `-1` (auto) |
+| `params.max_read_length` | Maximum read length to retain | `-1` (auto) |
+| `params.min_depth` | Minimum coverage depth for consensus | `1000` |
+| `params.count_barcodes` | Enable barcode split logic | `false` |
+| `params.gpu` | Use GPU for Medaka polishing | `false` |
+
+---
+
+## Usage
+
+### Basic Run
+
+```bash
+nextflow run main.nf \
+  --fastq_dir /path/to/fastqs \
+  --barcodes barcodes.txt \
+  --gpu true
 ```
 
-If you are submitting a job to a queue to run the pipeline, add the following to the beginning of your workflow to activate your new conda environment.
+### Using a Parameters File
 
-```shell
-module load mamba
-source /home/[USERID]/.bashrc
-conda activate /home/[USERID]/.conda/envs/nextflow
+Create a `params.config` file and run:
+
+```bash
+nextflow run main.nf -params-file params.config
 ```
 
-## Options
+---
 
-### General options
+## Dependencies
 
-|Option|Description|
-|:-------|:-----------|
-|--barcodes|*string*, A 2-column csv file containing the fastq file prefixes (such as barcode01) and the sample name. See example below|
-|--fastq_dir|*string*, Path to a directory containing either (a) a folder of fastq files for each barcode, or (b) a fastq file for each barcode|
-|--regions_bed|*string*, Path to a .bed file with coordinates for the region of interest (default: SIVregions_wBarcode.bed)|
-|--reference|*string*, Path to a fasta file with a reference genome for reads to be aligned against. See Reference and Regions below (default: SIVMac239FullGenome_wBarcode.fas)|
-|--outdir|*string*, Path for the output to be stored (default: nf-results/)|
-|--virus|*string*, Either 'HIV' or 'SIV' (default: SIV)|
-|--min_read_length|*integer*, Minimum read length allowable for QC filtering (default: 1200)|
-|--min_depth|*integer*, Minimum fragment depth of coverage allowable for haplotype analysis (default: 1000)|
-|--split_barcode|*boolean*, Should the barcode analysis for SIV Fragment 3 be performed (default: false)|
-|-work-dir|*string*, Path to pipeline work directory (default: /projects/b1042/LorenzoRedondoLab/Seth/work)|
+All dependencies are managed through `conda`. The environment is defined in `medaka.yaml`.
 
-See more details [here](https://www.nextflow.io/docs/latest/cli.html#pipeline-parameters)
+This pipeline is designed for execution on a SLURM-based HPC cluster, but can be adapted to other environments.
 
-### Options passed to RV Haplo
+---
 
-|Option|Description|
-|:-----|:----------|
-|--subgraphs|*integer*, Number of subgraphs to run MCL (default: 1)|
-|--abundance|*float*, A threshold for filtering low-abundance haplotypes. (default: 0.001)|
-|--smallest_snv|*integer*, Minimum # of SNV sites for haplotype construction. (default: 5)|
+## Output
 
-See the RVHaplo documentation [here](https://github.com/dhcai21/RVHaplo) and the journal article describing the software [here](https://doi.org/10.1093/bioinformatics/btac089).
+Results are organized as:
 
-## Reference and Regions
-
-Found in the `ReferenceSequences/` folder
-
-### HIV
-
-Reference genome: HXB2Ref_FullGenome.fas\
-Region .bed file: HXB2regions.bed
-
-### SIV
-
-Reference genome: SIVMac239FullGenome_wBarcode.fas\
-Region .bed file: SIVregions_wBarcode.bed
-
-### Barcode .csv Example
-
-```text
-barcode01,SampleA
-barcode02,SampleB
-barcode03,SampleC
+```{text}
+nf-results/
+  └── SAMPLE_ID/
+      └── Fragment_X/
+          ├── fastplong/
+          │   ├── *_filtered.fastq.gz
+          │   ├── fastp_report.*
+          ├── flye_out/
+          │   └── assembly.fasta
+          ├── *_consensus.fasta
+          ├── *_aligned.bam(.bai)
+          ├── *_consensus_trimmed.fasta
+          ├── read_counts.txt
 ```
+
+---
+
+## Notes
+
+- The pipeline supports both full-length and tiled fragment designs.
+- Barcode alignment is optional and only runs for barcoded fragments.
+- For `SIV Fragment_3`, trimmed sequences are further split at a defined barcode delimiter.
+- Custom Python and Perl scripts are located in the `scripts/` directory.
+
+---
+
+## Authors & Acknowledgments
+
+Developed by the RLR Lab at Northwestern University.  
+Inspired by previous pipelines for tiled amplicon assembly.  
+Uses `Nextflow`, `Flye`, `Medaka`, `minimap2`, `samtools`, `fastplong`.
+
+---
+
+## License
+
+This pipeline is released under the GPL-3.0 License.
