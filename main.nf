@@ -88,7 +88,7 @@ process qualityFilter {
         echo "Processing \${i}..."
         # Create a file for each fragment
         mkdir -p "${outdir}/${sample_id}/\$i"
-        length=\$(awk -v pat=\$i '\$1 == pat {print \$2}' "${workflow.projectDir}/ReferenceSequences/SIV_frag_sizes.txt")
+        length=\$(awk -v pat=\$i '\$4 == pat {print \$3 - \$2}' "${regions_bed}")
 
         if [ ${min_read_length} -gt -1 ]; then
             min_read=${min_read_length}
