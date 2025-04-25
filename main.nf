@@ -31,24 +31,26 @@ process concatenateFastq {
     """
     echo "Sample ${sample_id}:"
     # Create any missing directories
-    if [ ! -d ${outdir} ]; then
-        mkdir ${outdir};
+    if [ ! -d "${outdir}" ]; then
+        mkdir "${outdir}"
     fi
-    if [ ! -d ${outdir}/${sample_id} ]; then
-        mkdir ${outdir}/${sample_id};
-    elif [ -d ${outdir}/${sample_id} ]; then
-        rm -rf ${outdir}/${sample_id};
-        mkdir ${outdir}/${sample_id};
+    if [ ! -d "${outdir}/${sample_id}" ]; then
+        mkdir "${outdir}/${sample_id}"
+    elif [ -d "${outdir}/${sample_id}" ]; then
+        rm -rf "${outdir}/${sample_id}"
+        mkdir "${outdir}/${sample_id}"
     fi
 
     # Either concatenate all fastqs in a folder or just take the one
-    if [ -d ${fastq_dir}/${barcode} ]; then
+    if [ -d "${fastq_dir}/${barcode}" ]; then
         echo "Concatenating fastq files..."
-        cat ${fastq_dir}/${barcode}/*.fastq.gz > ${sample_id}_concatenated.fastq.gz;
-    elif [ -f ${fastq_dir}/${sample_id}.fastq.gz ]; then
-        cat ${fastq_dir}/${sample_id}.fastq.gz > ${sample_id}_concatenated.fastq.gz;
+        cat "${fastq_dir}/${barcode}/*.fastq.gz" > "${sample_id}_concatenated.fastq.gz"
+    elif [ -f "${fastq_dir}/${sample_id}.fastq.gz" ]; then
+        cat "${fastq_dir}/${sample_id}.fastq.gz" > "${sample_id}_concatenated.fastq.gz"
     fi
-    cp ${sample_id}_concatenated.fastq.gz ${outdir}/${sample_id}/
+
+    cp "${sample_id}_concatenated.fastq.gz" "${outdir}/${sample_id}/"
+
     if [ ! -f "${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz" ]; then
         exit 1
     fi
@@ -103,7 +105,7 @@ process qualityFilter {
         fi
 
         fastplong \
-            -i "${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz" \
+            -i "${sample_id}_concatenated.fastq.gz" \
             -o "${sample_id}_filtered.fastq.gz" \
             --qualified_quality_phred 15 \
             --length_required \$min_read \
@@ -425,20 +427,18 @@ process countBarcodes {
 
     shell:
     """
-    if [ ! -d ${outdir}/${sample_id} ]; then
-        mkdir ${outdir}/${sample_id};
-    fi
-    if [ ! -d ${outdir}/${sample_id}/barcode/ ]; then
-        mkdir ${outdir}/${sample_id}/barcode/
+
+    if [ ! -d "${outdir}/${sample_id}/barcode/" ]; then
+        mkdir "${outdir}/${sample_id}/barcode/"
     fi
 
-    minimap2 -ax lr:hq ${workflow.projectDir}/ReferenceSequences/barcode_reference.fas ${sample_id}_concatenated.fastq.gz > ${sample_id}_barcode.sam
-    samtools view -F 4 -bS -h -O BAM -e 'rlen>233' ${sample_id}_barcode.sam > ${sample_id}_barcode.bam
-    samtools sort ${sample_id}_barcode.bam > ${sample_id}_barcode_sorted.bam; samtools index ${sample_id}_barcode_sorted.bam
-    samtools depth -a -r "barcode" -@ 4 ${sample_id}_barcode_sorted.bam > ${outdir}/${sample_id}/barcode/barcode_depth.txt
-    perl ${workflow.projectDir}/scripts/bam_barcode_count.pl -b ${sample_id}_barcode_sorted.bam -s 113 -e 122 > ${outdir}/${sample_id}/barcode/barcodes.txt
-    cp ${sample_id}_barcode_sorted.bam ${outdir}/${sample_id}/barcode/${sample_id}_barcode_sorted.bam
-    cp ${sample_id}_barcode_sorted.bam.bai ${outdir}/${sample_id}/barcode/${sample_id}_barcode_sorted.bam.bai
+    minimap2 -ax lr:hq "${workflow.projectDir}/ReferenceSequences/barcode_reference.fas" "${sample_id}_concatenated.fastq.gz" > "${sample_id}_barcode.sam"
+    samtools view -F 4 -bS -h -O BAM -e 'rlen>233' "${sample_id}_barcode.sam" > "${sample_id}_barcode.bam"
+    samtools sort "${sample_id}_barcode.bam" > "${sample_id}_barcode_sorted.bam"; samtools index "${sample_id}_barcode_sorted.bam"
+    samtools depth -a -r "barcode" -@ 4 "${sample_id}_barcode_sorted.bam" > "${outdir}/${sample_id}/barcode/barcode_depth.txt"
+    perl "${workflow.projectDir}/scripts/bam_barcode_count.pl" -b "${sample_id}_barcode_sorted.bam" -s 113 -e 122 > "${outdir}/${sample_id}/barcode/barcodes.txt"
+    cp "${sample_id}_barcode_sorted.bam" "${outdir}/${sample_id}/barcode/${sample_id}_barcode_sorted.bam"
+    cp "${sample_id}_barcode_sorted.bam.bai" "${outdir}/${sample_id}/barcode/${sample_id}_barcode_sorted.bam.bai"
 
     """
 }
