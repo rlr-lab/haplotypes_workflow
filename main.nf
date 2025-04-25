@@ -44,7 +44,7 @@ process concatenateFastq {
     # Either concatenate all fastqs in a folder or just take the one
     if [ -d "${fastq_dir}/${barcode}" ]; then
         echo "Concatenating fastq files..."
-        cat "${fastq_dir}/${barcode}/*.fastq.gz" > "${sample_id}_concatenated.fastq.gz"
+        cat "${fastq_dir}/${barcode}/"*".fastq.gz" > "${sample_id}_concatenated.fastq.gz"
     elif [ -f "${fastq_dir}/${sample_id}.fastq.gz" ]; then
         cat "${fastq_dir}/${sample_id}.fastq.gz" > "${sample_id}_concatenated.fastq.gz"
     fi
