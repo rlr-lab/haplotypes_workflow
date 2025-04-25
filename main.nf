@@ -75,6 +75,7 @@ process qualityFilter {
     val outdir
     val min_read_length
     val max_read_length
+    path regions_bed
 
     output:
     path("${sample_id}_filtered.fastq.gz")
@@ -140,6 +141,7 @@ process flyeAssembly {
     path("${sample_id}_filtered.fastq.gz")
     path reference
     val outdir
+    path regions_bed
 
     output:
     path("flye_out/assembly.fasta")
@@ -459,8 +461,8 @@ workflow {
     
     // Run workflow
     concatenated = concatenateFastq(params.fastq_dir, samples_ch, params.outdir)
-    quality = qualityFilter(samples_ch, concatenated, params.outdir, params.min_read_length, params.max_read_length)
-    flye = flyeAssembly(samples_ch, quality, params.reference, params.outdir)
+    quality = qualityFilter(samples_ch, concatenated, params.outdir, params.min_read_length, params.max_read_length, params.regions_bed)
+    flye = flyeAssembly(samples_ch, quality, params.reference, params.outdir, params.regions_bed)
     cleaned = cleanContigs(samples_ch, flye, params.reference, params.regions_bed, params.outdir)
     polished = polishAssembly(samples_ch, cleaned, quality, params.outdir, params.gpu)
     aligned = alignReads(samples_ch, quality, polished, params.outdir)
