@@ -5,14 +5,11 @@ params.regions_bed = "${workflow.projectDir}/ReferenceSequences/SIVregions_wBarc
 params.reference = "${workflow.projectDir}/ReferenceSequences/SIVMac239FullGenome_wBarcode.fas"
 params.outdir = "${workflow.projectDir}/nf-results"
 params.virus = "SIV"
-params.min_read_length = 1200
+params.min_read_length = -1
+params.max_read_length = -1
 params.min_depth = 1000
-params.split_barcode = false
+params.count_barcodes = false
 params.gpu = false
-// RVHaplo parameters
-params.subgraphs = 1
-params.abundance = 0.001
-params.smallest_snv = 5
 
 process concatenateFastq {
     
@@ -28,7 +25,7 @@ process concatenateFastq {
     maxRetries 2
 
     output:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_concatenated.fastq.gz")
+    path("${sample_id}_concatenated.fastq.gz")
 
     shell:
     """
@@ -67,17 +64,20 @@ process qualityFilter {
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 1
-    time = { 45.minute * task.attempt}
+    time = { 120.minute * task.attempt}
     memory = { 4.GB * task.attempt}
     errorStrategy 'retry'
     maxRetries 2
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_concatenated.fastq.gz")
+    tuple val(barcode), val(sample_id), val(fragments)
+    path("${sample_id}_concatenated.fastq.gz")
     val outdir
+    val min_read_length
+    val max_read_length
 
     output:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_concatenated.fastq.gz"), path("${sample_id}_filtered.fastq.gz")
+    path("${sample_id}_filtered.fastq.gz")
 
     shell:
     """
@@ -90,12 +90,23 @@ process qualityFilter {
         mkdir -p "${outdir}/${sample_id}/\$i"
         length=\$(awk -v pat=\$i '\$1 == pat {print \$2}' "${workflow.projectDir}/ReferenceSequences/SIV_frag_sizes.txt")
 
+        if [ ${min_read_length} -gt -1 ]; then
+            min_read=${min_read_length}
+        else
+            min_read=\$((\${length} - 100))
+        fi
+        if [ ${max_read_length} -gt -1 ]; then
+            max_read=${max_read_length}
+        else
+            max_read=\$((\${length} + 100))
+        fi
+
         fastplong \
             -i "${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz" \
             -o "${sample_id}_filtered.fastq.gz" \
             --qualified_quality_phred 15 \
-            --length_required \$((\${length} - 100)) \
-            --length_limit \$((\${length} + 100)) \
+            --length_required \$min_read \
+            --length_limit \$max_read \
             --adapter_fasta "${workflow.projectDir}/ReferenceSequences/SIVprimers.fasta" \
             --thread 4 \
             --html "${sample_id}_fastp_report.html" \
@@ -118,18 +129,20 @@ process flyeAssembly {
     conda "${workflow.projectDir}/medaka.yaml"
     clusterOptions = '-A b1042'
     queue = 'genomics'
-    cpus = 4
-    time = { 15.minute * task.attempt}
+    cpus = 2
+    time = { 20.minute * task.attempt}
     memory = { 8.GB * task.attempt}
     errorStrategy 'retry'
     maxRetries 2
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_concatenated.fastq.gz"), path("${sample_id}_filtered.fastq.gz")
+    tuple val(barcode), val(sample_id), val(fragments)
+    path("${sample_id}_filtered.fastq.gz")
+    path reference
     val outdir
 
     output:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_concatenated.fastq.gz"), path("${sample_id}_filtered.fastq.gz"), path("flye_out/assembly.fasta")
+    path("flye_out/assembly.fasta")
     
     shell:
     """
@@ -139,15 +152,20 @@ process flyeAssembly {
         echo "Processing \${i}..."
         length=\$(awk -v pat=\$i '\$1 == pat {print \$2}' "${workflow.projectDir}/ReferenceSequences/SIV_frag_sizes.txt")
 
-        flye \
-            --nano-raw "${outdir}/${sample_id}/\$i/fastplong/${sample_id}_filtered.fastq.gz" \
-            --out-dir flye_out \
-            --genome-size \${length} \
-            --min-overlap 1000 \
-            --asm-coverage \$((50 * ${task.attempt})) \
-            --iterations 5 \
-            --no-alt-contigs \
-            --threads 8
+        { # Try to use assembly
+            flye \
+                --nano-raw "${outdir}/${sample_id}/\$i/fastplong/${sample_id}_filtered.fastq.gz" \
+                --out-dir flye_out \
+                --genome-size \${length} \
+                --min-overlap 1000 \
+                --asm-coverage 50 \
+                --iterations 5 \
+                --no-alt-contigs \
+                --threads 8
+        } || { # Use reference if assebmly can't be built
+                mkdir -p flye_out
+                cat ${reference} > flye_out/assembly.fasta
+        }
         cp -r flye_out/ ${outdir}/${sample_id}/\$i
     done
     """
@@ -167,13 +185,14 @@ process cleanContigs {
     maxRetries 2
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_concatenated.fastq.gz"), path("${sample_id}_filtered.fastq.gz"), path("flye_out/assembly.fasta")
+    tuple val(barcode), val(sample_id), val(fragments)
+    path("flye_out/assembly.fasta")
     path reference
     path regions_bed
     val outdir
 
     output:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_concatenated.fastq.gz"), path("${sample_id}_filtered.fastq.gz"), path("flye_out/assembly.fasta"), path("${sample_id}_assembly.fasta")
+    path("${sample_id}_assembly.fasta")
     
     shell:
     """
@@ -212,19 +231,21 @@ process polishAssembly {
         clusterOptions = '-A b1042'
         queue = 'genomics'
     }
-    cpus = 4
+    cpus = 1
     time = { 30.minute * task.attempt}
     memory = { 16.GB * task.attempt}
     errorStrategy 'retry'
     maxRetries 2
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_concatenated.fastq.gz"), path("${sample_id}_filtered.fastq.gz"), path("flye_out/assembly.fasta"), path("${sample_id}_assembly.fasta")
+    tuple val(barcode), val(sample_id), val(fragments)
+    path("${sample_id}_assembly.fasta")
+    path("${sample_id}_filtered.fastq.gz")
     val outdir
     val gpu
 
     output:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_concatenated.fastq.gz"), path("${sample_id}_filtered.fastq.gz"), path("flye_out/assembly.fasta"), path("${sample_id}_assembly.fasta"), path("medaka_out/consensus.fasta")
+    path("medaka_out/consensus.fasta")
 
     shell:
     """
@@ -250,18 +271,20 @@ process alignReads {
     conda "${workflow.projectDir}/medaka.yaml"
     clusterOptions = '-A b1042'
     queue = 'genomics'
-    cpus = 4
+    cpus = 2
     time = { 10.minute * task.attempt}
     memory = { 16.GB * task.attempt}
     errorStrategy 'retry'
     maxRetries 2
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_concatenated.fastq.gz"), path("${sample_id}_filtered.fastq.gz"), path("flye_out/assembly.fasta"), path("${sample_id}_assembly.fasta"), path("medaka_out/consensus.fasta")
+    tuple val(barcode), val(sample_id), val(fragments)
+    path("${sample_id}_filtered.fastq.gz")
+    path("medaka_out/consensus.fasta")
     val outdir
 
     output:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_concatenated.fastq.gz"), path("${sample_id}_filtered.fastq.gz"), path("flye_out/assembly.fasta"), path("${sample_id}_assembly.fasta"), path("medaka_out/consensus.fasta"), path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai")
+    tuple path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai")
 
     shell:
     """
@@ -293,12 +316,15 @@ process trimConsensus {
     maxRetries 2
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_concatenated.fastq.gz"), path("${sample_id}_filtered.fastq.gz"), path("flye_out/assembly.fasta"), path("${sample_id}_assembly.fasta"), path("medaka_out/consensus.fasta"), path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai")
+    tuple val(barcode), val(sample_id), val(fragments)
+    path("medaka_out/consensus.fasta")
+    tuple path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai")
     val virus
     val outdir
+    val min_depth
 
     output:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_concatenated.fastq.gz"), path("${sample_id}_filtered.fastq.gz"), path("flye_out/assembly.fasta"), path("${sample_id}_assembly.fasta"), path("medaka_out/consensus.fasta"), path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai"), path("${sample_id}_consensus_trimmed.fasta")
+    path("${sample_id}_consensus_trimmed.fasta")
     
     shell:
     """
@@ -312,7 +338,7 @@ process trimConsensus {
             -f "${outdir}/${sample_id}/\$i/${sample_id}_consensus.fasta" \
             -b "${outdir}/${sample_id}/\$i/${sample_id}_aligned.bam" \
             -o "${sample_id}_consensus_trimmed.fasta" \
-            -d 1000
+            -d ${min_depth}
 
         if [ ${virus} == "SIV" ] && [ \$i == "Fragment_3" ]; then
             python "${workflow.projectDir}/scripts/split_fasta_by_delimiter.py" \
@@ -343,14 +369,15 @@ process haplotypes {
     conda "${workflow.projectDir}/medaka.yaml"
     clusterOptions = '-A b1042'
     queue = 'genomics'
-    cpus = 4
+    cpus = 2
     time = { 10.minute * task.attempt}
     memory = { 16.GB * task.attempt}
     errorStrategy 'retry'
     maxRetries 2
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_concatenated.fastq.gz"), path("${sample_id}_filtered.fastq.gz"), path("flye_out/assembly.fasta"), path("${sample_id}_assembly.fasta"), path("medaka_out/consensus.fasta"), path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai"), path("${sample_id}_consensus_trimmed.fasta")
+    tuple val(barcode), val(sample_id), val(fragments)
+    tuple path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai")
     path reference
     path regions_bed
     val outdir
@@ -375,213 +402,10 @@ process haplotypes {
 
 }
 
-process firstConsensus {
-
-    executor 'slurm'
-    if(params.gpu) {
-        conda "${workflow.projectDir}/rvhaplo.yaml"
-        clusterOptions = '-A b1042 --gres=gpu:a100:1'
-        queue = 'genomics-gpu'
-    }
-    else {
-        conda "${workflow.projectDir}/rvhaplo-cpu.yaml"
-        clusterOptions = '-A b1042'
-        queue = 'genomics'
-    }
-    cpus = 4
-    time = { 20.minute * task.attempt}
-    memory = { 8.GB * task.attempt}
-    errorStrategy 'retry'
-    maxRetries 2
-
-
-    input:
-    tuple val(barcode), val(sample_id)
-    path "${sample_id}_concatenated.fastq.gz"
-    path reference
-    path regions_bed
-    val virus
-    path outdir
-    val min_read_length
-    val min_depth
-    val gpu
-
-    output:
-    //path "${outdir}/${sample_id}/coverage.txt"
-    path "${sample_id}*firstConsensus.fasta"
-
-    shell:
-    """
-
-    # Get regions
-    regions_array=(\$(awk '{ print \$4 }' $regions_bed))
-
-    # Coverage of all regions
-    minimap2 -ax lr:hq $reference ${sample_id}_concatenated.fastq.gz > full_genome.sam
-    samtools view -e 'rlen>${min_read_length}' -bS -F 4 full_genome.sam > full_genome.bam
-    samtools fastq full_genome.bam > ${outdir}/${sample_id}/${sample_id}_filtered.fastq
-    samtools sort full_genome.bam > full_genome_sorted.bam
-    samtools index full_genome_sorted.bam
-    echo "Getting coverage"
-    bedtools coverage -a $regions_bed -b full_genome_sorted.bam -nonamecheck > ${outdir}/${sample_id}/coverage.txt
-    cat ${outdir}/${sample_id}/coverage.txt
-    coverage_fractions=(\$(awk '{ print \$NF }' ${outdir}/${sample_id}/coverage.txt))
-    coverage_depth=(\$(awk '{ print \$5 }' ${outdir}/${sample_id}/coverage.txt))
-
-    # Split reference into separate contigs
-    bedtools getfasta -fi ${reference} -bed ${regions_bed} > reference_contigs.fasta
-    python ${workflow.projectDir}/scripts/rename_contigs.py -i reference_contigs.fasta -o renamed_contigs.fasta -b ${regions_bed}
-
-    count_index=0
-    for i in \${regions_array[@]}; do
-        echo \${i}
-        fraction=\${coverage_fractions[\$count_index]}
-        fraction=\${fraction:0:4}
-        fraction=\$(awk '{print \$1*100}' <<< \$fraction)
-        depth=\${coverage_depth[\$count_index]}
-        if [ "\$fraction" -lt "100" ] || [ "\$depth" -lt "$min_depth" ]; then
-            let "count_index+=1"
-            continue
-        fi
-        if [ ! -d ${outdir}/${sample_id}/\${i} ]; then
-            mkdir ${outdir}/${sample_id}/\${i}
-            echo "${sample_id},\$i" >> ${sample_id}Fragments.txt
-        fi
-
-        # Alignment and first consensus
-        mini_align -i ${outdir}/${sample_id}/${sample_id}_filtered.fastq -r renamed_contigs.fasta -d lr:hq -m -t 4 -p firstAlign_\${i}
-        medaka inference firstAlign_\${i}.bam ${sample_id}_\${i}.hdf --threads 2 --regions \${i} --model r1041_e82_400bps_hac_v4.3.0
-        medaka sequence *_\${i}.hdf renamed_contigs.fasta ${sample_id}_\${i}_firstConsensus.fasta --threads 4 --no-fillgaps --regions \${i}
-        cp ${sample_id}_\${i}_firstConsensus.fasta ${outdir}/${sample_id}/\${i}/${sample_id}_\${i}_firstConsensus.fasta
-
-        # Error handling if consensus isn't created
-        if [ ! -f ${outdir}/${sample_id}/\${i}/${sample_id}_\${i}_firstConsensus.fasta ]; then 
-            echo "Could not build first consensus" >> $outdir/$sample_id/\${i}/${sample_id}_error.txt
-            pwd >> ${outdir}/${sample_id}/\${i}/${sample_id}_error.txt
-            echo "Could not build first consensus" > ${sample_id}_\${i}_firstConsensus.fasta
-            continue
-        fi
-        let "count_index+=1"
-    done
-
-    """
-}
-
-process rvhaplo {
-    
-    executor 'slurm'
-    if(params.gpu) {
-        conda "${workflow.projectDir}/rvhaplo.yaml"
-        clusterOptions = '-A b1042 --gres=gpu:a100:1'
-        queue = 'genomics-gpu'
-        cpus = 2
-        time = { 60.minute * task.attempt }
-        memory = { 40.GB * task.attempt }
-    }
-    else {
-        conda "${workflow.projectDir}/rvhaplo-cpu.yaml"
-        clusterOptions = '-A b1042'
-        queue = 'genomics'
-        cpus = 4
-        time = { 120.minute * task.attempt }
-        memory = { 70.GB * task.attempt }
-    }
-    errorStrategy 'retry'
-    maxRetries 2
-
-    input:
-    tuple val(barcode), val(sample_id)
-    path "${sample_id}_concatenated.fastq.gz"
-    path "${sample_id}*firstConsensus.fasta"
-    path outdir
-    val subgraphs
-    val abundance
-    val smallest_snv
-    path regions_bed
-    val gpu
-
-    shell:
-    """
-
-    # Get list of created fragment directories
-    dir_list=(\$(ls ${outdir}/${sample_id}/ | grep Fragment))
-
-    echo "\${dir_list[@]}"
-
-    for i in "\${!dir_list[@]}"; do
-
-        echo \${dir_list[\$i]}
-        # Make sure first consensus exists
-        if [ ! -f ${outdir}/${sample_id}/\${dir_list[\$i]}/*firstConsensus.fasta ]; then 
-            echo "Could not build first consensus" > ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_\${i}_error.txt
-            pwd >> ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_\${i}_error.txt
-            echo "Could not build first consensus"
-            continue
-        fi
-
-        # Test that fasta isn't just an error message
-        line=\$(head -n 1 ${outdir}/${sample_id}/\${dir_list[\$i]}/*firstConsensus.fasta)
-        if [ \$line == "Could not build first consensus" ]; then
-            echo "Could not build first consensus" > ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_\${i}_error.txt
-            pwd >> ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_\${i}_error.txt
-            echo "Could not build first consensus"
-            continue
-        fi
-
-        # Align to filter reads
-        minimap2 -ax lr:hq ${outdir}/${sample_id}/\${dir_list[\$i]}/*firstConsensus.fasta ${outdir}/${sample_id}/${sample_id}_filtered.fastq > ${sample_id}_\${i}_IntermediateAlignment.sam
-        # Remove unaligned reads and filter for length
-        samtools view -bS -F 4 -O BAM -o ${sample_id}_\${i}_filtered.bam ${sample_id}_\${i}_IntermediateAlignment.sam
-        samtools fastq ${sample_id}_\${i}_filtered.bam > ${sample_id}_\${i}_filtered.fastq
-        cp ${sample_id}_\${i}_filtered.bam ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_filtered.bam
-        cp ${sample_id}_\${i}_filtered.fastq ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_filtered.fastq
-
-        # Rename contigs
-        python ${workflow.projectDir}/scripts/rename_contigs.py -i ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}*firstConsensus.fasta -o ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_firstConsensus_renamed.fasta -b ${regions_bed}
-
-        # Make sure fasta files have content
-        firstcon_length=\$(wc -l < ${outdir}/${sample_id}/\${dir_list[\$i]}/*firstConsensus.fasta)
-        filtered_length=\$(wc -l < ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_filtered.fastq)
-
-        # Check that first consensus has content
-        if [ \$firstcon_length -lt 2 ]; then
-            echo "No reads aligned in first consensus" > ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_error.txt
-        # Check that some filtered reads passed
-        elif [ \$filtered_length -lt 2 ]; then
-            echo "No reads aligned to region" > ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_error.txt
-        else
-            # Align to first consensus, make new consensus
-            echo "Building consensus"
-            mini_align -i ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_filtered.fastq -r ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_firstConsensus_renamed.fasta -d lr:hq -m -t 4 -p secondAlign
-            medaka inference secondAlign.bam ${sample_id}.hdf --threads 2 --model r1041_e82_400bps_hac_v4.3.0
-            medaka sequence ${sample_id}.hdf ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_firstConsensus_renamed.fasta ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_realignment.fasta --threads 4
-            minimap2 -ax lr:hq ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_realignment.fasta ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_filtered.fastq > ${sample_id}_RVHaploinput.sam
-            rm ${outdir}/${sample_id}/\${dir_list[\$i]}/*.mmi
-
-            # Run RVHaplo
-            echo "Haplotype discovery"
-            RVHaploPath=${workflow.projectDir}"/rvhaplo.sh"
-            ("\${RVHaploPath}" -i ${sample_id}_RVHaploinput.sam -r ${outdir}/${sample_id}/\${dir_list[\$i]}/${sample_id}_realignment.fasta -o ${outdir}/${sample_id}/\${dir_list[\$i]} -p ${sample_id} -t 8 -e 0.1 -sg $subgraphs -a $abundance -ss $smallest_snv)
-
-            echo "Finished "\${dir_list[\$i]}
-        fi
-
-    done
-
-    echo "Finished haplotype discovery for all regions"
-
-    """
-}
-
 process countBarcodes {
 
     executor 'slurm'
-    if(params.gpu) {
-        conda "${workflow.projectDir}/rvhaplo.yaml"
-    }
-    else {
-        conda "${workflow.projectDir}/rvhaplo-cpu.yaml"
-    }
+    conda "${workflow.projectDir}/medaka.yaml"
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 2
@@ -591,8 +415,8 @@ process countBarcodes {
     maxRetries 2
 
     input:
-    tuple val(barcode), val(sample_id)
-    path "${sample_id}_concatenated.fastq.gz"
+    tuple val(barcode), val(sample_id), val(fragments)
+    path("${sample_id}_concatenated.fastq.gz")
     path outdir
     val gpu
 
@@ -618,22 +442,31 @@ process countBarcodes {
 
 workflow {
     
+    // Read in csv
     Channel
         .fromPath(params.barcodes, checkIfExists: true, type: 'file')
-        .splitCsv()
-        .set {barcodes_ch}
+        .splitCsv(header:false)
+        .map { row -> tuple(row[0], row[1], row[2]) }
+        .set { samples_ch }
+    
+    // What fragments contain a barcode
+    def barcoded_regions = ["Fragment_3", "FL"]
 
-    concatenated = concatenateFastq(params.fastq_dir, barcodes_ch, params.outdir)
-    quality = qualityFilter(concatenated, params.outdir)
-    flye = flyeAssembly(quality, params.outdir)
-    cleaned = cleanContigs(flye, params.reference, params.regions_bed, params.outdir)
-    polished = polishAssembly(cleaned, params.outdir, params.gpu)
-    aligned = alignReads(polished, params.outdir)
-    trimmed = trimConsensus(aligned, params.virus, params.outdir)
-    haplotypes(trimmed, params.reference, params.regions_bed, params.outdir, params.virus)
-
-    //firstCon = firstConsensus(barcodes_ch, concatenated, params.reference, params.regions_bed, params.virus, params.outdir, params.min_read_length, params.min_depth, params.gpu)
-    //haplotypes(barcodes_ch, concatenated, firstCon, params.outdir, params.subgraphs, params.abundance, params.smallest_snv, params.regions_bed, params.gpu)
-    //if (params.split_barcode)
-    //    countBarcodes(barcodes_ch, concatenated, params.outdir, params.gpu)
+    // Filter for only samples with a barcode - will be used in countBarcodes process
+    samples_ch
+        .filter { barcode, sample_id, fragments -> fragments != null && barcoded_regions.any { fragments.contains(it) }}
+        .set { barcoded_ch }
+    
+    // Run workflow
+    concatenated = concatenateFastq(params.fastq_dir, samples_ch, params.outdir)
+    quality = qualityFilter(samples_ch, concatenated, params.outdir, params.min_read_length, params.max_read_length)
+    flye = flyeAssembly(samples_ch, quality, params.reference, params.outdir)
+    cleaned = cleanContigs(samples_ch, flye, params.reference, params.regions_bed, params.outdir)
+    polished = polishAssembly(samples_ch, cleaned, quality, params.outdir, params.gpu)
+    aligned = alignReads(samples_ch, quality, polished, params.outdir)
+    trimmed = trimConsensus(samples_ch, polished, aligned, params.virus, params.outdir, params.min_depth)
+    haplotypes(samples_ch, aligned, params.reference, params.regions_bed, params.outdir, params.virus)
+    // Optional process to split/count barcoded fragments
+    if (params.count_barcodes)
+        countBarcodes(barcoded_ch, concatenated, params.outdir, params.gpu)
 }
