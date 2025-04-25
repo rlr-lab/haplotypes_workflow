@@ -150,7 +150,7 @@ process flyeAssembly {
     frags=(${fragments})
     for i in \${frags[@]}; do
         echo "Processing \${i}..."
-        length=\$(awk -v pat=\$i '\$1 == pat {print \$2}' "${workflow.projectDir}/ReferenceSequences/SIV_frag_sizes.txt")
+        length=\$(awk -v pat=\$i '\$4 == pat {print \$3 - \$2}' "${regions_bed}")
 
         { # Try to use assembly
             flye \
