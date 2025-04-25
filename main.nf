@@ -15,7 +15,7 @@ process concatenateFastq {
     
     executor 'local'
     // Conda not needed, but initialized now so that the next process doesn't time out while creating environment
-    conda "${workflow.projectDir}/medaka.yaml"
+    conda "${workflow.projectDir}/conda/medaka.yaml"
 
     input:
     path fastq_dir
@@ -60,7 +60,7 @@ process concatenateFastq {
 process qualityFilter {
 
     executor 'slurm'
-    conda "${workflow.projectDir}/medaka.yaml"
+    conda "${workflow.projectDir}/conda/medaka.yaml"
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 1
@@ -126,7 +126,7 @@ process qualityFilter {
 process flyeAssembly {
 
     executor 'slurm'
-    conda "${workflow.projectDir}/medaka.yaml"
+    conda "${workflow.projectDir}/conda/medaka.yaml"
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 2
@@ -175,7 +175,7 @@ process flyeAssembly {
 process cleanContigs {
 
     executor 'slurm'
-    conda "${workflow.projectDir}/medaka.yaml"
+    conda "${workflow.projectDir}/conda/medaka.yaml"
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 1
@@ -222,12 +222,12 @@ process polishAssembly {
 
     executor 'slurm'
     if(params.gpu) {
-        conda "${workflow.projectDir}/medaka.yaml"
+        conda "${workflow.projectDir}/conda/medaka.yaml"
         clusterOptions = '-A b1042 --gres=gpu:a100:1'
         queue = 'genomics-gpu'
     }
     else {
-        conda "${workflow.projectDir}/medaka.yaml"
+        conda "${workflow.projectDir}/conda/medaka.yaml"
         clusterOptions = '-A b1042'
         queue = 'genomics'
     }
@@ -268,7 +268,7 @@ process polishAssembly {
 process alignReads {
 
     executor 'slurm'
-    conda "${workflow.projectDir}/medaka.yaml"
+    conda "${workflow.projectDir}/conda/medaka.yaml"
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 2
@@ -306,7 +306,7 @@ process alignReads {
 process trimConsensus {
 
     executor 'slurm'
-    conda "${workflow.projectDir}/medaka.yaml"
+    conda "${workflow.projectDir}/conda/medaka.yaml"
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 1
@@ -366,7 +366,7 @@ process trimConsensus {
 process haplotypes {
 
     executor 'slurm'
-    conda "${workflow.projectDir}/medaka.yaml"
+    conda "${workflow.projectDir}/conda/medaka.yaml"
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 2
@@ -405,7 +405,7 @@ process haplotypes {
 process countBarcodes {
 
     executor 'slurm'
-    conda "${workflow.projectDir}/medaka.yaml"
+    conda "${workflow.projectDir}/conda/medaka.yaml"
     clusterOptions = '-A b1042'
     queue = 'genomics'
     cpus = 2
