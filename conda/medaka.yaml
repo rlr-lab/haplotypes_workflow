@@ -330,4 +330,3 @@ dependencies:
       - glibc==0.6.1
       - httplib2==0.22.0
       - pyparsing==3.2.3
-prefix: /home/lzh8485/.conda/envs/medaka
