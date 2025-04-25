@@ -260,7 +260,8 @@ process polishAssembly {
             -d "${outdir}/${sample_id}/\$i/${sample_id}_assembly.fasta" \
             -m r1041_e82_400bps_sup_v5.0.0 \
             -o medaka_out \
-            -t 8
+            -t 8 \
+            -f -x
         cp medaka_out/consensus.fasta "${outdir}/${sample_id}/\$i/${sample_id}_consensus.fasta"
     done
     """
