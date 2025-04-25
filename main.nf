@@ -90,7 +90,7 @@ process qualityFilter {
     for i in \${frags[@]}; do
         echo "Processing \${i}..."
         # Create a file for each fragment
-        mkdir -p "${outdir}/${sample_id}/\$i"
+        mkdir -p "${outdir}/${sample_id}/"\$i
         length=\$(awk -v pat=\$i '\$4 == pat {print \$3 - \$2}' "${regions_bed}")
 
         if [ ${min_read_length} -gt -1 ]; then
@@ -117,10 +117,10 @@ process qualityFilter {
         
         echo "Finished filtering"
         echo "Moving files..."
-        mkdir -p "${outdir}/${sample_id}/\$i/fastplong"
-        cp "${sample_id}_filtered.fastq.gz" "${outdir}/${sample_id}/\$i/fastplong/"
-        cp "${sample_id}_fastp_report.html" "${outdir}/${sample_id}/\$i/fastplong/"
-        cp "${sample_id}_fastp_report.json" "${outdir}/${sample_id}/\$i/fastplong/"
+        mkdir -p "${outdir}/${sample_id}/"\$i"/fastplong"
+        cp "${sample_id}_filtered.fastq.gz" "${outdir}/${sample_id}/"\$i"/fastplong/"
+        cp "${sample_id}_fastp_report.html" "${outdir}/${sample_id}/"\$i"/fastplong/"
+        cp "${sample_id}_fastp_report.json" "${outdir}/${sample_id}/"\$i"/fastplong/"
     done
 
     """
@@ -158,7 +158,7 @@ process flyeAssembly {
 
         { # Try to use assembly
             flye \
-                --nano-raw "${outdir}/${sample_id}/\$i/fastplong/${sample_id}_filtered.fastq.gz" \
+                --nano-raw "${outdir}/${sample_id}/"\$i"/fastplong/${sample_id}_filtered.fastq.gz" \
                 --out-dir flye_out \
                 --genome-size \${length} \
                 --min-overlap 1000 \
@@ -214,10 +214,10 @@ process cleanContigs {
         seqtk subseq renamed_contigs.fasta frags.txt > ref.fasta
         python "${workflow.projectDir}/scripts/reorder_contigs.py" \
             -r ref.fasta \
-            -a "${outdir}/${sample_id}/\$i/flye_out/assembly.fasta" \
+            -a "${outdir}/${sample_id}/"\$i"/flye_out/assembly.fasta" \
             -o "${sample_id}_assembly.fasta" \
             --concat
-        cp "${sample_id}_assembly.fasta" "${outdir}/${sample_id}/\$i/"
+        cp "${sample_id}_assembly.fasta" "${outdir}/${sample_id}/"\$i"/"
     done
     """
 }
@@ -258,13 +258,13 @@ process polishAssembly {
     for i in \${frags[@]}; do
         echo "Processing \${i}..."
         medaka_consensus \
-            -i "${outdir}/${sample_id}/\$i/fastplong/${sample_id}_filtered.fastq.gz" \
-            -d "${outdir}/${sample_id}/\$i/${sample_id}_assembly.fasta" \
+            -i "${sample_id}_filtered.fastq.gz" \
+            -d "${outdir}/${sample_id}/"\$i"/${sample_id}_assembly.fasta" \
             -m r1041_e82_400bps_sup_v5.0.0 \
             -o medaka_out \
             -t 8 \
             -f -x
-        cp medaka_out/consensus.fasta "${outdir}/${sample_id}/\$i/${sample_id}_consensus.fasta"
+        cp medaka_out/consensus.fasta "${outdir}/${sample_id}/"\$i"/${sample_id}_consensus.fasta"
     done
     """
 
@@ -298,11 +298,11 @@ process alignReads {
     
     for i in \${frags[@]}; do
         echo "Processing \${i}..."
-        minimap2 -ax lr:hq "${outdir}/${sample_id}/\$i/${sample_id}_consensus.fasta" "${outdir}/${sample_id}/\$i/fastplong/${sample_id}_filtered.fastq.gz" | \
+        minimap2 -ax lr:hq "${outdir}/${sample_id}/"\$i"/${sample_id}_consensus.fasta" "${outdir}/${sample_id}/"\$i"/fastplong/${sample_id}_filtered.fastq.gz" | \
             samtools sort -o "${sample_id}_aligned.bam"
         samtools index "${sample_id}_aligned.bam"
-        cp "${sample_id}_aligned.bam" "${outdir}/${sample_id}/\$i/"
-        cp "${sample_id}_aligned.bam.bai" "${outdir}/${sample_id}/\$i/"
+        cp "${sample_id}_aligned.bam" "${outdir}/${sample_id}/"\$i"/"
+        cp "${sample_id}_aligned.bam.bai" "${outdir}/${sample_id}/"\$i"/"
     done
     """
 
@@ -340,8 +340,8 @@ process trimConsensus {
 
         echo "Trimming \${i}..."
         python "${workflow.projectDir}/scripts/trim_contigs_by_depth.py" \
-            -f "${outdir}/${sample_id}/\$i/${sample_id}_consensus.fasta" \
-            -b "${outdir}/${sample_id}/\$i/${sample_id}_aligned.bam" \
+            -f "${outdir}/${sample_id}/"\$i"/${sample_id}_consensus.fasta" \
+            -b "${outdir}/${sample_id}/"\$i"/${sample_id}_aligned.bam" \
             -o "${sample_id}_consensus_trimmed.fasta" \
             -d ${min_depth}
 
@@ -354,14 +354,14 @@ process trimConsensus {
             mv "${sample_id}_consensus_split.fasta" "${sample_id}_consensus_trimmed.fasta"
         fi
 
-        cp "${sample_id}_consensus_trimmed.fasta" "${outdir}/${sample_id}/\$i/"
+        cp "${sample_id}_consensus_trimmed.fasta" "${outdir}/${sample_id}/"\$i"/"
 
         echo "Realigning \${i}..."
-        minimap2 -ax lr:hq "${sample_id}_consensus_trimmed.fasta" "${outdir}/${sample_id}/\$i/fastplong/${sample_id}_filtered.fastq.gz" | \
+        minimap2 -ax lr:hq "${sample_id}_consensus_trimmed.fasta" "${outdir}/${sample_id}/"\$i"/fastplong/${sample_id}_filtered.fastq.gz" | \
             samtools sort -o "${sample_id}_aligned.bam"
         samtools index "${sample_id}_aligned.bam"
-        cp "${sample_id}_aligned.bam" "${outdir}/${sample_id}/\$i/"
-        cp "${sample_id}_aligned.bam.bai" "${outdir}/${sample_id}/\$i/"
+        cp "${sample_id}_aligned.bam" "${outdir}/${sample_id}/"\$i"/"
+        cp "${sample_id}_aligned.bam.bai" "${outdir}/${sample_id}/"\$i"/"
 
     done
     """
@@ -399,9 +399,9 @@ process haplotypes {
         echo "Processing \${i}..."
         
         # Count each 'haplotype'
-        python "${workflow.projectDir}/scripts/contig_read_counter.py" "${outdir}/${sample_id}/\$i/${sample_id}_aligned.bam" --output-bam "${sample_id}_filtered.bam"
+        python "${workflow.projectDir}/scripts/contig_read_counter.py" "${outdir}/${sample_id}/"\$i"/${sample_id}_aligned.bam" --output-bam "${sample_id}_filtered.bam"
 
-        cp "read_counts.txt" "${outdir}/${sample_id}/\$i/"
+        cp "read_counts.txt" "${outdir}/${sample_id}/"\$i"/"
     done
     """
 
