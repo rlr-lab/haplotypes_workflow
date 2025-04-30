@@ -1,57 +1,59 @@
+#!/usr/bin/env nextflow
+nextflow.enable.dsl=2
+
 // General parameters
-params.barcodes = "barcodes.txt"
-params.fastq_dir = ""
-params.regions_bed = "${workflow.projectDir}/ReferenceSequences/SIVregions_wBarcode.bed"
-params.reference = "${workflow.projectDir}/ReferenceSequences/SIVMac239FullGenome_wBarcode.fas"
-params.outdir = "${workflow.projectDir}/nf-results"
-params.virus = "SIV"
+params.barcodes        = "barcodes.txt"
+params.fastq_dir       = ""
+params.regions_bed     = "${workflow.projectDir}/ReferenceSequences/SIVregions_wBarcode.bed"
+params.reference       = "${workflow.projectDir}/ReferenceSequences/SIVMac239FullGenome_wBarcode.fas"
+params.outdir          = "${workflow.projectDir}/nf-results"
+params.virus           = "SIV"
 params.min_read_length = -1
 params.max_read_length = -1
-params.min_depth = 1000
-params.count_barcodes = false
-params.gpu = false
+params.min_depth       = 1000
+params.count_barcodes  = false
+params.gpu             = false
 
+// 1. Concatenate FASTQ
 process concatenateFastq {
     
     executor 'local'
     // Conda not needed, but initialized now so that the next process doesn't time out while creating environment
     conda "${workflow.projectDir}/conda/medaka.yaml"
-
-    input:
-    path fastq_dir
-    tuple val(barcode), val(sample_id), val(fragments)
-    val outdir
     errorStrategy 'retry'
     maxRetries 2
 
+    input:
+    tuple val(barcode), val(sample_id)
+
     output:
-    path("${sample_id}_concatenated.fastq.gz")
+    tuple val(barcode), val(sample_id), path("${sample_id}_concatenated.fastq.gz")
 
     shell:
     """
     echo "Sample ${sample_id}:"
     # Create any missing directories
-    if [ ! -d "${outdir}" ]; then
-        mkdir "${outdir}"
+    if [ ! -d "${params.outdir}" ]; then
+        mkdir "${params.outdir}"
     fi
-    if [ ! -d "${outdir}/${sample_id}" ]; then
-        mkdir "${outdir}/${sample_id}"
-    elif [ -d "${outdir}/${sample_id}" ]; then
-        rm -rf "${outdir}/${sample_id}"
-        mkdir "${outdir}/${sample_id}"
+    if [ ! -d "${params.outdir}/${sample_id}" ]; then
+        mkdir "${params.outdir}/${sample_id}"
+    elif [ -d "${params.outdir}/${sample_id}" ]; then
+        rm -rf "${params.outdir}/${sample_id}"
+        mkdir "${params.outdir}/${sample_id}"
     fi
 
     # Either concatenate all fastqs in a folder or just take the one
-    if [ -d "${fastq_dir}/${barcode}" ]; then
+    if [ -d "${params.fastq_dir}/${barcode}" ]; then
         echo "Concatenating fastq files..."
-        cat "${fastq_dir}/${barcode}/"*".fastq.gz" > "${sample_id}_concatenated.fastq.gz"
-    elif [ -f "${fastq_dir}/${sample_id}.fastq.gz" ]; then
-        cat "${fastq_dir}/${sample_id}.fastq.gz" > "${sample_id}_concatenated.fastq.gz"
+        cat "${params.fastq_dir}/${barcode}/"*".fastq.gz" > "${sample_id}_concatenated.fastq.gz"
+    elif [ -f "${params.fastq_dir}/${sample_id}.fastq.gz" ]; then
+        cat "${params.fastq_dir}/${sample_id}.fastq.gz" > "${sample_id}_concatenated.fastq.gz"
     fi
 
-    cp "${sample_id}_concatenated.fastq.gz" "${outdir}/${sample_id}/"
+    cp -f "${sample_id}_concatenated.fastq.gz" "${params.outdir}/${sample_id}/"
 
-    if [ ! -f "${outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz" ]; then
+    if [ ! -f "${params.outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz" ]; then
         exit 1
     fi
 
@@ -59,6 +61,7 @@ process concatenateFastq {
 
 }
 
+// 2. Quality filter
 process qualityFilter {
 
     executor 'slurm'
@@ -72,60 +75,53 @@ process qualityFilter {
     maxRetries 2
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments)
-    path("${sample_id}_concatenated.fastq.gz")
-    val outdir
-    val min_read_length
-    val max_read_length
-    path regions_bed
+    tuple val(barcode), val(sample_id), val(fragments), path(concat_fastq)
 
     output:
-    path("${sample_id}_filtered.fastq.gz")
+    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_filtered.fastq.gz")
 
     shell:
     """
     # Split processing by fragment
-    echo "Sample ${sample_id}:"
-    frags=(${fragments})
-    for i in \${frags[@]}; do
-        echo "Processing \${i}..."
-        # Create a file for each fragment
-        mkdir -p "${outdir}/${sample_id}/"\$i
-        length=\$(awk -v pat=\$i '\$4 == pat {print \$3 - \$2}' "${regions_bed}")
+    echo "Sample ${sample_id}, ${fragments}:"
 
-        if [ ${min_read_length} -gt -1 ]; then
-            min_read=${min_read_length}
-        else
-            min_read=\$((\${length} - 100))
-        fi
-        if [ ${max_read_length} -gt -1 ]; then
-            max_read=${max_read_length}
-        else
-            max_read=\$((\${length} + 100))
-        fi
+    # Create a file for each fragment
+    mkdir -p "${params.outdir}/${sample_id}/${fragments}"
+    length=\$(awk -v pat=${fragments} '\$4 == pat {print \$3 - \$2}' "${params.regions_bed}")
 
-        fastplong \
-            -i "${sample_id}_concatenated.fastq.gz" \
-            -o "${sample_id}_filtered.fastq.gz" \
-            --qualified_quality_phred 15 \
-            --length_required \$min_read \
-            --length_limit \$max_read \
-            --adapter_fasta "${workflow.projectDir}/ReferenceSequences/SIVprimers.fasta" \
-            --thread 4 \
-            --html "${sample_id}_fastp_report.html" \
-            --json "${sample_id}_fastp_report.json"
+    if [ ${params.min_read_length} -gt -1 ]; then
+        min_read=${params.min_read_length}
+    else
+        min_read=\$((\${length} - 100))
+    fi
+    if [ ${params.max_read_length} -gt -1 ]; then
+        max_read=${params.max_read_length}
+    else
+        max_read=\$((\${length} + 100))
+    fi
+
+    fastplong \
+        -i "${sample_id}_concatenated.fastq.gz" \
+        -o "${sample_id}_filtered.fastq.gz" \
+        --qualified_quality_phred 15 \
+        --length_required \$min_read \
+        --length_limit \$max_read \
+        --adapter_fasta "${workflow.projectDir}/ReferenceSequences/SIVprimers.fasta" \
+        --thread 4 \
+        --html "${sample_id}_fastp_report.html" \
+        --json "${sample_id}_fastp_report.json"
         
-        echo "Finished filtering"
-        echo "Moving files..."
-        mkdir -p "${outdir}/${sample_id}/"\$i"/fastplong"
-        cp "${sample_id}_filtered.fastq.gz" "${outdir}/${sample_id}/"\$i"/fastplong/"
-        cp "${sample_id}_fastp_report.html" "${outdir}/${sample_id}/"\$i"/fastplong/"
-        cp "${sample_id}_fastp_report.json" "${outdir}/${sample_id}/"\$i"/fastplong/"
-    done
+    echo "Finished filtering"
+    echo "Moving files..."
+    mkdir -p "${params.outdir}/${sample_id}/${fragments}/fastplong"
+    cp -f "${sample_id}_filtered.fastq.gz" "${params.outdir}/${sample_id}/${fragments}/fastplong/"
+    cp -f "${sample_id}_fastp_report.html" "${params.outdir}/${sample_id}/${fragments}/fastplong/"
+    cp -f "${sample_id}_fastp_report.json" "${params.outdir}/${sample_id}/${fragments}/fastplong/"
 
     """
 }
 
+// 3. Flye assembly
 process flyeAssembly {
 
     executor 'slurm'
@@ -139,43 +135,45 @@ process flyeAssembly {
     maxRetries 2
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments)
-    path("${sample_id}_filtered.fastq.gz")
-    path reference
-    val outdir
-    path regions_bed
+    tuple val(barcode), val(sample_id), val(fragments), path(filtered_fastq)
 
     output:
-    path("flye_out/assembly.fasta")
+    tuple val(barcode), val(sample_id), val(fragments), path("flye_out/assembly.fasta")
     
     shell:
     """
-    echo "Sample ${sample_id}:"
-    frags=(${fragments})
-    for i in \${frags[@]}; do
-        echo "Processing \${i}..."
-        length=\$(awk -v pat=\$i '\$4 == pat {print \$3 - \$2}' "${regions_bed}")
+    echo "Sample ${sample_id}, ${fragments}:"
 
-        { # Try to use assembly
-            flye \
-                --nano-raw "${outdir}/${sample_id}/"\$i"/fastplong/${sample_id}_filtered.fastq.gz" \
-                --out-dir flye_out \
-                --genome-size \${length} \
-                --min-overlap 1000 \
-                --asm-coverage 50 \
-                --iterations 5 \
-                --no-alt-contigs \
-                --threads 8
-        } || { # Use reference if assebmly can't be built
-                mkdir -p flye_out
-                cat ${reference} > flye_out/assembly.fasta
-        }
-        cp -r flye_out/ ${outdir}/${sample_id}/\$i
-    done
+    length=\$(awk -v pat=${fragments} '\$4 == pat {print \$3 - \$2}' "${params.regions_bed}")
+
+    # Try to use assembly
+    run_flye () {
+        flye \
+            --nano-raw "${params.outdir}/${sample_id}/${fragments}/fastplong/${sample_id}_filtered.fastq.gz" \
+            --out-dir flye_out \
+            --genome-size \${length} \
+            --min-overlap 1000 \
+            --asm-coverage 50 \
+            --iterations 5 \
+            --no-alt-contigs \
+            --threads 8
+    }
+
+    if run_flye; then
+        echo "Flye consensus generated"
+    else
+        echo "Flye failed - copying reference"
+        mkdir -p flye_out
+        cat ${params.reference} > flye_out/assembly.fasta
+    fi
+
+    cp -rf flye_out/ "${params.outdir}/${sample_id}/${fragments}"
+
     """
 
 }
 
+// 4. Clean and reorder contigs
 process cleanContigs {
 
     executor 'slurm'
@@ -189,39 +187,32 @@ process cleanContigs {
     maxRetries 2
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments)
-    path("flye_out/assembly.fasta")
-    path reference
-    path regions_bed
-    val outdir
+    tuple val(barcode), val(sample_id), val(fragments), path(assembly_fasta)
 
     output:
-    path("${sample_id}_assembly.fasta")
+    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_assembly.fasta")
     
     shell:
     """
-    echo "Sample ${sample_id}:"
-    frags=(${fragments})
+    echo "Sample ${sample_id}, ${fragments}:"
 
     # Split reference into separate contigs
-    seqtk subseq ${reference} ${regions_bed} > reference_contigs.fasta
-    python ${workflow.projectDir}/scripts/rename_contigs.py -i reference_contigs.fasta -o renamed_contigs.fasta -b ${regions_bed}
+    seqtk subseq ${params.reference} ${params.regions_bed} > reference_contigs.fasta
+    python ${workflow.projectDir}/scripts/rename_contigs.py -i reference_contigs.fasta -o renamed_contigs.fasta -b ${params.regions_bed}
     
+    echo ${fragments} > frags.txt
+    seqtk subseq renamed_contigs.fasta frags.txt > ref.fasta
+    python "${workflow.projectDir}/scripts/reorder_contigs.py" \
+        -r ref.fasta \
+        -a "${params.outdir}/${sample_id}/${fragments}/flye_out/assembly.fasta" \
+        -o "${sample_id}_assembly.fasta" \
+        --concat
+    cp -f "${sample_id}_assembly.fasta" "${params.outdir}/${sample_id}/${fragments}/"
 
-    for i in \${frags[@]}; do
-        echo "Processing \${i}..."
-        echo "\$i" > frags.txt
-        seqtk subseq renamed_contigs.fasta frags.txt > ref.fasta
-        python "${workflow.projectDir}/scripts/reorder_contigs.py" \
-            -r ref.fasta \
-            -a "${outdir}/${sample_id}/"\$i"/flye_out/assembly.fasta" \
-            -o "${sample_id}_assembly.fasta" \
-            --concat
-        cp "${sample_id}_assembly.fasta" "${outdir}/${sample_id}/"\$i"/"
-    done
     """
 }
 
+//5. Polish Assembly
 process polishAssembly {
 
     executor 'slurm'
@@ -242,34 +233,29 @@ process polishAssembly {
     maxRetries 2
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments)
-    path("${sample_id}_assembly.fasta")
-    path("${sample_id}_filtered.fastq.gz")
-    val outdir
-    val gpu
+    tuple val(barcode), val(sample_id), val(fragments), path(assembly_fasta), path(filtered_fastq)
 
     output:
-    path("medaka_out/consensus.fasta")
+    tuple val(barcode), val(sample_id), val(fragments), path("medaka_out/consensus.fasta")
 
     shell:
     """
-    echo "Sample ${sample_id}:"
-    frags=(${fragments})
-    for i in \${frags[@]}; do
-        echo "Processing \${i}..."
-        medaka_consensus \
-            -i "${sample_id}_filtered.fastq.gz" \
-            -d "${outdir}/${sample_id}/"\$i"/${sample_id}_assembly.fasta" \
-            -m r1041_e82_400bps_sup_v5.0.0 \
-            -o medaka_out \
-            -t 8 \
-            -f -x
-        cp medaka_out/consensus.fasta "${outdir}/${sample_id}/"\$i"/${sample_id}_consensus.fasta"
-    done
+    echo "Sample ${sample_id}, ${fragments}:"
+
+    medaka_consensus \
+        -i "${sample_id}_filtered.fastq.gz" \
+        -d "${params.outdir}/${sample_id}/${fragments}/${sample_id}_assembly.fasta" \
+        -m r1041_e82_400bps_sup_v5.0.0 \
+        -o medaka_out \
+        -t 8 \
+        -f -x
+    cp -f medaka_out/consensus.fasta "${params.outdir}/${sample_id}/${fragments}/${sample_id}_consensus.fasta"
+
     """
 
 }
 
+// 6. Align reads back
 process alignReads {
 
     executor 'slurm'
@@ -283,31 +269,26 @@ process alignReads {
     maxRetries 2
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments)
-    path("${sample_id}_filtered.fastq.gz")
-    path("medaka_out/consensus.fasta")
-    val outdir
+    tuple val(barcode), val(sample_id), val(fragments), path(consensus_fasta), path(filtered_fastq)
 
     output:
-    tuple path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai")
+    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai")
 
     shell:
     """
-    echo "Sample ${sample_id}:"
-    frags=(${fragments})
+    echo "Sample ${sample_id}, ${fragments}:"
     
-    for i in \${frags[@]}; do
-        echo "Processing \${i}..."
-        minimap2 -ax lr:hq "${outdir}/${sample_id}/"\$i"/${sample_id}_consensus.fasta" "${outdir}/${sample_id}/"\$i"/fastplong/${sample_id}_filtered.fastq.gz" | \
-            samtools sort -o "${sample_id}_aligned.bam"
-        samtools index "${sample_id}_aligned.bam"
-        cp "${sample_id}_aligned.bam" "${outdir}/${sample_id}/"\$i"/"
-        cp "${sample_id}_aligned.bam.bai" "${outdir}/${sample_id}/"\$i"/"
-    done
+    minimap2 -ax lr:hq "${params.outdir}/${sample_id}/${fragments}/${sample_id}_consensus.fasta" "${params.outdir}/${sample_id}/${fragments}/fastplong/${sample_id}_filtered.fastq.gz" | \
+        samtools sort -o "${sample_id}_aligned.bam"
+    samtools index "${sample_id}_aligned.bam"
+    cp -f "${sample_id}_aligned.bam" "${params.outdir}/${sample_id}/${fragments}/"
+    cp -f "${sample_id}_aligned.bam.bai" "${params.outdir}/${sample_id}/${fragments}/"
+
     """
 
 }
 
+// 7. Trim consensus by depth
 process trimConsensus {
 
     executor 'slurm'
@@ -321,53 +302,53 @@ process trimConsensus {
     maxRetries 2
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments)
-    path("medaka_out/consensus.fasta")
-    tuple path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai")
-    val virus
-    val outdir
-    val min_depth
+    tuple val(barcode), val(sample_id), val(fragments), path(consensus_fasta), path(aligned_bam), path(aligned_bai)
 
     output:
-    path("${sample_id}_consensus_trimmed.fasta")
+    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_consensus_trimmed.fasta")
     
     shell:
     """
-    echo "Sample ${sample_id}:"
-    frags=(${fragments})
+    echo "Sample ${sample_id}, ${fragments}:"
 
-    for i in \${frags[@]}; do
+    python "${workflow.projectDir}/scripts/trim_contigs_by_depth.py" \
+        -f "${params.outdir}/${sample_id}/${fragments}/${sample_id}_consensus.fasta" \
+        -b "${params.outdir}/${sample_id}/${fragments}/${sample_id}_aligned.bam" \
+        -o "${sample_id}_consensus_trimmed.fasta" \
+        -d ${params.min_depth}
 
-        echo "Trimming \${i}..."
-        python "${workflow.projectDir}/scripts/trim_contigs_by_depth.py" \
-            -f "${outdir}/${sample_id}/"\$i"/${sample_id}_consensus.fasta" \
-            -b "${outdir}/${sample_id}/"\$i"/${sample_id}_aligned.bam" \
-            -o "${sample_id}_consensus_trimmed.fasta" \
-            -d ${min_depth}
-
-        if [ ${virus} == "SIV" ] && [ \$i == "Fragment_3" ]; then
+    if [ ${params.virus} == "SIV" ] && [ ${fragments} == "Fragment_3" ]; then
+        splitFasta() {
             python "${workflow.projectDir}/scripts/split_fasta_by_delimiter.py" \
                 -i "${sample_id}_consensus_trimmed.fasta" \
                 -d "acgcgagccatgnnnnnnnnnncgatgcgcgcgt" \
                 -o "${sample_id}_consensus_split.fasta"
+        }
+        if splitFasta && [ -f "${sample_id}_consensus_split.fasta" ]; then
+            echo "Contig split by delimiter"
+            echo "Further processing done over two contigs"
             rm "${sample_id}_consensus_trimmed.fasta"
             mv "${sample_id}_consensus_split.fasta" "${sample_id}_consensus_trimmed.fasta"
+        else
+            echo "Delimiter could not be found"
+            echo "Assembly kept as one contig"
         fi
+    fi
 
-        cp "${sample_id}_consensus_trimmed.fasta" "${outdir}/${sample_id}/"\$i"/"
+    cp -f "${sample_id}_consensus_trimmed.fasta" "${params.outdir}/${sample_id}/${fragments}/"
 
-        echo "Realigning \${i}..."
-        minimap2 -ax lr:hq "${sample_id}_consensus_trimmed.fasta" "${outdir}/${sample_id}/"\$i"/fastplong/${sample_id}_filtered.fastq.gz" | \
-            samtools sort -o "${sample_id}_aligned.bam"
-        samtools index "${sample_id}_aligned.bam"
-        cp "${sample_id}_aligned.bam" "${outdir}/${sample_id}/"\$i"/"
-        cp "${sample_id}_aligned.bam.bai" "${outdir}/${sample_id}/"\$i"/"
+    echo "Realigning..."
+    minimap2 -ax lr:hq "${sample_id}_consensus_trimmed.fasta" "${params.outdir}/${sample_id}/${fragments}/fastplong/${sample_id}_filtered.fastq.gz" | \
+        samtools sort -o "${sample_id}_aligned.bam"
+    samtools index "${sample_id}_aligned.bam"
+    cp -f "${sample_id}_aligned.bam" "${params.outdir}/${sample_id}/${fragments}/"
+    cp -f "${sample_id}_aligned.bam.bai" "${params.outdir}/${sample_id}/${fragments}/"
 
-    done
     """
 
 }
 
+// 8. Haplotype counting
 process haplotypes {
 
     executor 'slurm'
@@ -381,28 +362,20 @@ process haplotypes {
     maxRetries 2
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments)
-    tuple path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai")
-    path reference
-    path regions_bed
-    val outdir
-    val virus
+    tuple val(barcode), val(sample_id), val(fragments), path(trimmed_fasta)
 
     output:
-    path("read_counts.txt")
+    tuple val(barcode), val(sample_id), val(fragments), path("read_counts.txt")
 
     shell:
     """
-    echo "Sample ${sample_id}:"
-    frags=(${fragments})
-    for i in \${frags[@]}; do
-        echo "Processing \${i}..."
+    echo "Sample ${sample_id}, ${fragments}:"
         
-        # Count each 'haplotype'
-        python "${workflow.projectDir}/scripts/contig_read_counter.py" "${outdir}/${sample_id}/"\$i"/${sample_id}_aligned.bam" --output-bam "${sample_id}_filtered.bam"
+    # Count each 'haplotype'
+    python "${workflow.projectDir}/scripts/contig_read_counter.py" "${params.outdir}/${sample_id}/${fragments}/${sample_id}_aligned.bam" --output-bam "${sample_id}_filtered.bam"
 
-        cp "read_counts.txt" "${outdir}/${sample_id}/"\$i"/"
-    done
+    cp -f "read_counts.txt" "${params.outdir}/${sample_id}/${fragments}/"
+
     """
 
 }
@@ -420,25 +393,28 @@ process countBarcodes {
     maxRetries 2
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments)
-    path("${sample_id}_concatenated.fastq.gz")
-    path outdir
-    val gpu
+    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_filtered.fastq.gz")
 
     shell:
     """
 
-    if [ ! -d "${outdir}/${sample_id}/barcode/" ]; then
-        mkdir "${outdir}/${sample_id}/barcode/"
+    if [ ! -d "${params.outdir}/${sample_id}/barcode/" ]; then
+        mkdir "${params.outdir}/${sample_id}/barcode/"
     fi
 
-    minimap2 -ax lr:hq "${workflow.projectDir}/ReferenceSequences/barcode_reference.fas" "${sample_id}_concatenated.fastq.gz" > "${sample_id}_barcode.sam"
+    if [ -f "${params.outdir}/${sample_id}/${fragments}/fastplong/${sample_id}_filtered.fastq.gz" ]; then
+        filtered="${params.outdir}/${sample_id}/${fragments}/fastplong/${sample_id}_filtered.fastq.gz"
+    else
+        filtered="${sample_id}_filtered.fastq.gz"
+    fi
+
+    minimap2 -ax lr:hq "${workflow.projectDir}/ReferenceSequences/barcode_reference.fas" "\${filtered}" > "${sample_id}_barcode.sam"
     samtools view -F 4 -bS -h -O BAM -e 'rlen>233' "${sample_id}_barcode.sam" > "${sample_id}_barcode.bam"
     samtools sort "${sample_id}_barcode.bam" > "${sample_id}_barcode_sorted.bam"; samtools index "${sample_id}_barcode_sorted.bam"
-    samtools depth -a -r "barcode" -@ 4 "${sample_id}_barcode_sorted.bam" > "${outdir}/${sample_id}/barcode/barcode_depth.txt"
-    perl "${workflow.projectDir}/scripts/bam_barcode_count.pl" -b "${sample_id}_barcode_sorted.bam" -s 113 -e 122 > "${outdir}/${sample_id}/barcode/barcodes.txt"
-    cp "${sample_id}_barcode_sorted.bam" "${outdir}/${sample_id}/barcode/${sample_id}_barcode_sorted.bam"
-    cp "${sample_id}_barcode_sorted.bam.bai" "${outdir}/${sample_id}/barcode/${sample_id}_barcode_sorted.bam.bai"
+    samtools depth -a -r "barcode" -@ 4 "${sample_id}_barcode_sorted.bam" > "${params.outdir}/${sample_id}/barcode/barcode_depth.txt"
+    perl "${workflow.projectDir}/scripts/bam_barcode_count.pl" -b "${sample_id}_barcode_sorted.bam" -s 113 -e 122 > "${params.outdir}/${sample_id}/barcode/barcodes.txt"
+    cp -f "${sample_id}_barcode_sorted.bam" "${params.outdir}/${sample_id}/barcode/${sample_id}_barcode_sorted.bam"
+    cp -f "${sample_id}_barcode_sorted.bam.bai" "${params.outdir}/${sample_id}/barcode/${sample_id}_barcode_sorted.bam.bai"
 
     """
 }
@@ -449,27 +425,67 @@ workflow {
     Channel
         .fromPath(params.barcodes, checkIfExists: true, type: 'file')
         .splitCsv(header:false)
-        .map { row -> tuple(row[0], row[1], row[2]) }
+        .map { row -> tuple(row[0], row[1]) }
         .set { samples_ch }
     
-    // What fragments contain a barcode
-    def barcoded_regions = ["Fragment_3", "FL"]
+    // Concatenate fastq once per sample
+    concatenated = concatenateFastq(samples_ch)
 
-    // Filter for only samples with a barcode - will be used in countBarcodes process
-    samples_ch
-        .filter { barcode, sample_id, fragments -> fragments != null && barcoded_regions.any { fragments.contains(it) }}
-        .set { barcoded_ch }
+    // Split to flatmap of fragments
+    Channel
+        .fromPath(params.barcodes, checkIfExists: true, type: 'file')
+        .splitCsv(header:false)
+        .flatMap { row ->
+            def barcode = row[0]
+            def sample_id = row[1]
+            def fragments = row[2].tokenize(' ')
+            fragments.collect { fragment -> tuple(barcode, sample_id, fragment) }
+        }
+        .set { fragmented_ch }
     
-    // Run workflow
-    concatenated = concatenateFastq(params.fastq_dir, samples_ch, params.outdir)
-    quality = qualityFilter(samples_ch, concatenated, params.outdir, params.min_read_length, params.max_read_length, params.regions_bed)
-    flye = flyeAssembly(samples_ch, quality, params.reference, params.outdir, params.regions_bed)
-    cleaned = cleanContigs(samples_ch, flye, params.reference, params.regions_bed, params.outdir)
-    polished = polishAssembly(samples_ch, cleaned, quality, params.outdir, params.gpu)
-    aligned = alignReads(samples_ch, quality, polished, params.outdir)
-    trimmed = trimConsensus(samples_ch, polished, aligned, params.virus, params.outdir, params.min_depth)
-    haplotypes(samples_ch, aligned, params.reference, params.regions_bed, params.outdir, params.virus)
+    // Combine with concatenated file
+    quality_input = fragmented_ch
+        .combine(concatenated, by: 1)
+        .map { sample, barcode, fragment, barcode1, concat ->
+            tuple(barcode, sample, fragment, concat)
+        }
+
+    // Continue with workflow
+    quality      = qualityFilter(quality_input)
+    assembled    = flyeAssembly(quality)
+    cleaned      = cleanContigs(assembled)
+
+    // Join cleaned and quality for polishing
+    polish_input = cleaned
+        .join(quality, by: [1, 1])
+        .map { sample, barcode, fragments, assembly, barcode1, fragments1, filtered -> 
+            tuple(barcode, sample, fragments, assembly, filtered)}
+    polished     = polishAssembly(polish_input)
+
+    // Join polished and quality for alignment
+    align_input  = polished
+        .join(quality, by: [1, 1])
+        .map { sample, barcode, fragments, consensus, barcode1, fragments1, filtered -> 
+            tuple(barcode, sample, fragments, consensus, filtered)}
+    aligned      = alignReads(align_input)
+
+    // Join polished and aligned for trimming
+    trim_input   = polished
+        .join(aligned, by: [1, 1])
+        .map { sample, barcode, fragments, consensus, barcode1, fragments1, bam, bai -> 
+            tuple(barcode, sample, fragments, consensus, bam, bai)}
+    trimmed      = trimConsensus(trim_input)
+
+    haplo        = haplotypes(trimmed)
     // Optional process to split/count barcoded fragments
-    if (params.count_barcodes)
-        countBarcodes(barcoded_ch, concatenated, params.outdir, params.gpu)
+    if (params.count_barcodes) {
+        // What fragments contain a barcode
+        def barcoded_regions = ["Fragment_3", "FL"]
+
+        // Filter input for barcoded samples, join with quality output
+        barcoded_ch = quality
+            .filter { barcode, sample_id, fragments, path -> fragments != null && barcoded_regions.any { fragments.contains(it) }}
+        
+        countBarcodes(barcoded_ch)
+    }
 }
