@@ -8,8 +8,11 @@ from Bio.SeqRecord import SeqRecord
 
 def get_coverage_regions(bam, contig_id, min_depth):
     """Returns the start and end of the high-coverage region for a contig."""
-    cmd = ["samtools", "depth", "-a", "-r", contig_id, bam]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    try:
+        cmd = ["samtools", "depth", "-a", "-r", contig_id, bam]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except:
+        return None, None
     
     positions = []
     for line in result.stdout.strip().split("\n"):
@@ -50,7 +53,7 @@ def main():
     parser.add_argument("-f", "--fasta", required=True, help="Input contig FASTA file")
     parser.add_argument("-b", "--bam", required=True, help="Sorted and indexed BAM file")
     parser.add_argument("-o", "--output", default="trimmed_contigs.fasta", help="Output trimmed FASTA")
-    parser.add_argument("-d", "--depth", type=int, default=1000, help="Minimum depth threshold (default: 1000)")
+    parser.add_argument("-d", "--depth", type=float, default=1000, help="Minimum depth threshold (default: 1000)")
     args = parser.parse_args()
 
     trim_contigs_by_depth(args.fasta, args.bam, args.output, args.depth)
