@@ -85,7 +85,6 @@ Defined at the top of the Nextflow script or passed via `-params-file`.
 | `params.virus` | Virus name, affects trimming logic | `"SIV"` |
 | `params.min_read_length` | Minimum read length to retain | `-1` (auto) |
 | `params.max_read_length` | Maximum read length to retain | `-1` (auto) |
-| `params.min_depth` | Minimum coverage depth for consensus | `1000` |
 | `params.count_barcodes` | Enable barcode count logic | `false` |
 | `params.gpu` | Use GPU for Medaka polishing | `false` |
 

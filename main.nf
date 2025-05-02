@@ -10,7 +10,6 @@ params.outdir          = "${workflow.projectDir}/nf-results"
 params.virus           = "SIV"
 params.min_read_length = -1
 params.max_read_length = -1
-params.min_depth       = 1000
 params.count_barcodes  = false
 params.gpu             = false
 
@@ -149,7 +148,7 @@ process flyeAssembly {
     # Try to use assembly
     run_flye () {
         flye \
-            --nano-raw "${params.outdir}/${sample_id}/${fragments}/fastplong/${sample_id}_filtered.fastq.gz" \
+            --nano-raw "${sample_id}_filtered.fastq.gz" \
             --out-dir flye_out \
             --genome-size \${length} \
             --min-overlap 1000 \
@@ -204,7 +203,7 @@ process cleanContigs {
     seqtk subseq renamed_contigs.fasta frags.txt > ref.fasta
     python "${workflow.projectDir}/scripts/reorder_contigs.py" \
         -r ref.fasta \
-        -a "${params.outdir}/${sample_id}/${fragments}/flye_out/assembly.fasta" \
+        -a "assembly.fasta" \
         -o "${sample_id}_assembly.fasta" \
         --concat
     cp -f "${sample_id}_assembly.fasta" "${params.outdir}/${sample_id}/${fragments}/"
@@ -244,7 +243,7 @@ process polishAssembly {
 
     medaka_consensus \
         -i "${sample_id}_filtered.fastq.gz" \
-        -d "${params.outdir}/${sample_id}/${fragments}/${sample_id}_assembly.fasta" \
+        -d "${sample_id}_assembly.fasta" \
         -m r1041_e82_400bps_sup_v5.0.0 \
         -o medaka_out \
         -t 8 \
@@ -278,7 +277,7 @@ process alignReads {
     """
     echo "Sample ${sample_id}, ${fragments}:"
     
-    minimap2 -ax lr:hq "${params.outdir}/${sample_id}/${fragments}/${sample_id}_consensus.fasta" "${params.outdir}/${sample_id}/${fragments}/fastplong/${sample_id}_filtered.fastq.gz" | \
+    minimap2 -ax lr:hq "consensus.fasta" "${sample_id}_filtered.fastq.gz" | \
         samtools sort -o "${sample_id}_aligned.bam"
     samtools index "${sample_id}_aligned.bam"
     cp -f "${sample_id}_aligned.bam" "${params.outdir}/${sample_id}/${fragments}/"
@@ -305,18 +304,30 @@ process trimConsensus {
     tuple val(barcode), val(sample_id), val(fragments), path(consensus_fasta), path(aligned_bam), path(aligned_bai)
 
     output:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_consensus_trimmed.fasta")
+    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_consensus_trimmed.fasta"), path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai")
     
     shell:
     """
     echo "Sample ${sample_id}, ${fragments}:"
 
-    python "${workflow.projectDir}/scripts/trim_contigs_by_depth.py" \
-        -f "${params.outdir}/${sample_id}/${fragments}/${sample_id}_consensus.fasta" \
-        -b "${params.outdir}/${sample_id}/${fragments}/${sample_id}_aligned.bam" \
-        -o "${sample_id}_consensus_trimmed.fasta" \
-        -d ${params.min_depth}
+    # Drop shortest 10% of aligned reads
+    python "${workflow.projectDir}/scripts/filter_by_aligned_length.py" \
+        "${sample_id}_aligned.bam" \
+        length_filtered.bam
+    samtools sort length_filtered.bam > length_filtered_sorted.bam
+    samtools index length_filtered_sorted.bam
 
+    depth=\$(samtools depth length_filtered_sorted.bam | awk '{sum+=\$3} END {print (sum/NR)*0.9}')
+    echo "Trimming to a minimum depth of \${depth}"
+
+    # Trim contig to remove bases on ends with low coverage
+    python "${workflow.projectDir}/scripts/trim_contigs_by_depth.py" \
+        -f "consensus.fasta" \
+        -b length_filtered_sorted.bam \
+        -o "${sample_id}_consensus_trimmed.fasta" \
+        -d \${depth}
+
+    # Split SIV Fragment_3 into 2 sequences around barcode
     if [ ${params.virus} == "SIV" ] && [ ${fragments} == "Fragment_3" ]; then
         splitFasta() {
             python "${workflow.projectDir}/scripts/split_fasta_by_delimiter.py" \
@@ -335,11 +346,20 @@ process trimConsensus {
         fi
     fi
 
+    # Rename consensus sequence in fasta
+    cp "${sample_id}_consensus_trimmed.fasta" temp_rename.fasta
+    python "${workflow.projectDir}/scripts/fastaRegexRemove.py" \
+        -i temp_rename.fasta \
+        -r "assembled_sequence" \
+        -n "${fragments}" \
+        -o "${sample_id}_consensus_trimmed.fasta"
+
     cp -f "${sample_id}_consensus_trimmed.fasta" "${params.outdir}/${sample_id}/${fragments}/"
 
     echo "Realigning..."
-    minimap2 -ax lr:hq "${sample_id}_consensus_trimmed.fasta" "${params.outdir}/${sample_id}/${fragments}/fastplong/${sample_id}_filtered.fastq.gz" | \
-        samtools sort -o "${sample_id}_aligned.bam"
+    minimap2 -ax lr:hq "${sample_id}_consensus_trimmed.fasta" "${params.outdir}/${sample_id}/${fragments}/fastplong/${sample_id}_filtered.fastq.gz" > aligned.sam
+    samtools view -bSh -F 4 aligned.sam > aligned.bam
+    samtools sort -o "${sample_id}_aligned.bam" aligned.bam
     samtools index "${sample_id}_aligned.bam"
     cp -f "${sample_id}_aligned.bam" "${params.outdir}/${sample_id}/${fragments}/"
     cp -f "${sample_id}_aligned.bam.bai" "${params.outdir}/${sample_id}/${fragments}/"
@@ -362,7 +382,7 @@ process haplotypes {
     maxRetries 2
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments), path(trimmed_fasta)
+    tuple val(barcode), val(sample_id), val(fragments), path(trimmed_fasta), path(aligned_bam), path(aligned_bai)
 
     output:
     tuple val(barcode), val(sample_id), val(fragments), path("read_counts.txt")
@@ -372,7 +392,9 @@ process haplotypes {
     echo "Sample ${sample_id}, ${fragments}:"
         
     # Count each 'haplotype'
-    python "${workflow.projectDir}/scripts/contig_read_counter.py" "${params.outdir}/${sample_id}/${fragments}/${sample_id}_aligned.bam" --output-bam "${sample_id}_filtered.bam"
+    python "${workflow.projectDir}/scripts/contig_read_counter.py" "${sample_id}_aligned.bam" \
+        --output-bam "${sample_id}_filtered.bam" \
+        --min-mapping-quality 15
 
     cp -f "read_counts.txt" "${params.outdir}/${sample_id}/${fragments}/"
 
@@ -402,13 +424,7 @@ process countBarcodes {
         mkdir "${params.outdir}/${sample_id}/barcode/"
     fi
 
-    if [ -f "${params.outdir}/${sample_id}/${fragments}/fastplong/${sample_id}_filtered.fastq.gz" ]; then
-        filtered="${params.outdir}/${sample_id}/${fragments}/fastplong/${sample_id}_filtered.fastq.gz"
-    else
-        filtered="${sample_id}_filtered.fastq.gz"
-    fi
-
-    minimap2 -ax lr:hq "${workflow.projectDir}/ReferenceSequences/barcode_reference.fas" "\${filtered}" > "${sample_id}_barcode.sam"
+    minimap2 -ax lr:hq "${workflow.projectDir}/ReferenceSequences/barcode_reference.fas" "${sample_id}_filtered.fastq.gz" > "${sample_id}_barcode.sam"
     samtools view -F 4 -bS -h -O BAM -e 'rlen>233' "${sample_id}_barcode.sam" > "${sample_id}_barcode.bam"
     samtools sort "${sample_id}_barcode.bam" > "${sample_id}_barcode_sorted.bam"; samtools index "${sample_id}_barcode_sorted.bam"
     samtools depth -a -r "barcode" -@ 4 "${sample_id}_barcode_sorted.bam" > "${params.outdir}/${sample_id}/barcode/barcode_depth.txt"
@@ -451,32 +467,32 @@ workflow {
         }
 
     // Continue with workflow
-    quality      = qualityFilter(quality_input)
-    assembled    = flyeAssembly(quality)
-    cleaned      = cleanContigs(assembled)
+    quality = qualityFilter(quality_input)
+    assembled = flyeAssembly(quality)
+    cleaned = cleanContigs(assembled)
 
     // Join cleaned and quality for polishing
     polish_input = cleaned
         .join(quality, by: [1, 1])
         .map { sample, barcode, fragments, assembly, barcode1, fragments1, filtered -> 
             tuple(barcode, sample, fragments, assembly, filtered)}
-    polished     = polishAssembly(polish_input)
+    polished = polishAssembly(polish_input)
 
     // Join polished and quality for alignment
-    align_input  = polished
+    align_input = polished
         .join(quality, by: [1, 1])
         .map { sample, barcode, fragments, consensus, barcode1, fragments1, filtered -> 
             tuple(barcode, sample, fragments, consensus, filtered)}
-    aligned      = alignReads(align_input)
+    aligned = alignReads(align_input)
 
     // Join polished and aligned for trimming
-    trim_input   = polished
+    trim_input = polished
         .join(aligned, by: [1, 1])
         .map { sample, barcode, fragments, consensus, barcode1, fragments1, bam, bai -> 
             tuple(barcode, sample, fragments, consensus, bam, bai)}
-    trimmed      = trimConsensus(trim_input)
+    trimmed = trimConsensus(trim_input)
+    haplo = haplotypes(trimmed)
 
-    haplo        = haplotypes(trimmed)
     // Optional process to split/count barcoded fragments
     if (params.count_barcodes) {
         // What fragments contain a barcode
