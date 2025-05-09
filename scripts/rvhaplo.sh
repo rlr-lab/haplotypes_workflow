@@ -436,7 +436,8 @@ else
 	file_prefix=$file_path"/"$prefix
 fi
 
-workflow_path=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P)
+current_path=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P)
+workflow_path=$(dirname $current_path)
 if [ -z "$workflow_path" ]; then
 	workflow_path="/home/lzh8485/haplotypes_workflow"
 fi
