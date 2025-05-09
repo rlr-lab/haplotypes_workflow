@@ -12,6 +12,7 @@ params.min_read_length = -1
 params.max_read_length = -1
 params.count_barcodes  = false
 params.gpu             = false
+params.rvhaplo         = false
 
 // 1. Concatenate FASTQ
 process concatenateFastq {
@@ -45,7 +46,7 @@ process concatenateFastq {
     # Either concatenate all fastqs in a folder or just take the one
     if [ -d "${params.fastq_dir}/${barcode}" ]; then
         echo "Concatenating fastq files..."
-        cat "${params.fastq_dir}/${barcode}/"*".fastq.gz" > "${sample_id}_concatenated.fastq.gz"
+        cat ${params.fastq_dir}/${barcode}/*.fastq.gz > "${sample_id}_concatenated.fastq.gz"
     elif [ -f "${params.fastq_dir}/${sample_id}.fastq.gz" ]; then
         cat "${params.fastq_dir}/${sample_id}.fastq.gz" > "${sample_id}_concatenated.fastq.gz"
     fi
@@ -435,6 +436,48 @@ process countBarcodes {
     """
 }
 
+process RVHaplo {
+
+    executor 'slurm'
+    if(params.gpu) {
+        conda "${workflow.projectDir}/conda/medaka.yaml"
+        clusterOptions = '-A b1042 --gres=gpu:a100:1'
+        queue = 'genomics-gpu'
+    }
+    else {
+        conda "${workflow.projectDir}/conda/medaka.yaml"
+        clusterOptions = '-A b1042'
+        queue = 'genomics'
+    }
+    cpus = 2
+    time = { 120.minute * task.attempt}
+    memory = { 32.GB * task.attempt}
+    errorStrategy 'ignore'
+    maxRetries 2
+
+    input:
+    tuple val(barcode), val(sample_id), val(fragments), path(trimmed_fasta), path(aligned_bam), path(aligned_bai)
+
+    shell:
+    """
+    # Run RVHaplo
+
+    echo "Sample ${sample_id}, ${fragments}:"
+ 
+    RVHaploPath=${workflow.projectDir}"/scripts/rvhaplo.sh"
+ 
+    "\${RVHaploPath}" \
+        -i "${sample_id}_aligned.bam" \
+        -r "${sample_id}_consensus_trimmed.fasta" \
+        -o ${params.outdir}/${sample_id}/${fragments} \
+        -p ${sample_id} \
+        -t 8 -e 0.1 -sg 10 -a 0.001 -ss 5
+    
+    echo "Done"
+    """
+
+}
+
 workflow {
     
     // Read in csv
@@ -491,7 +534,14 @@ workflow {
         .map { sample, barcode, fragments, consensus, barcode1, fragments1, bam, bai -> 
             tuple(barcode, sample, fragments, consensus, bam, bai)}
     trimmed = trimConsensus(trim_input)
-    haplo = haplotypes(trimmed)
+
+    // Haplotyping
+    if ( params.rvhaplo ) {
+        rvhaplo = RVHaplo(trimmed)
+    }
+    else {
+        haplo = haplotypes(trimmed)
+    }
 
     // Optional process to split/count barcoded fragments
     if (params.count_barcodes) {
