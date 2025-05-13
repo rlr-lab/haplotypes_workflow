@@ -77,16 +77,16 @@ Defined at the top of the Nextflow script or passed via `-params-file`.
 
 | Parameter | Description | Default |
 |----------|-------------|---------|
-| `params.barcodes` | Path to barcode/sample info file | `"barcodes.txt"` |
-| `params.fastq_dir` | Path to directory of FASTQ files | `""` |
-| `params.regions_bed` | BED file of region coordinates | `ReferenceSequences/SIVregions_wBarcode.bed` |
-| `params.reference` | Full genome reference FASTA | `ReferenceSequences/SIVMac239FullGenome_wBarcode.fas` |
-| `params.outdir` | Output directory | `nf-results/` |
-| `params.virus` | Virus name, affects trimming logic | `"SIV"` |
-| `params.min_read_length` | Minimum read length to retain | `-1` (auto) |
-| `params.max_read_length` | Maximum read length to retain | `-1` (auto) |
-| `params.count_barcodes` | Enable barcode count logic | `false` |
-| `params.gpu` | Use GPU for Medaka polishing | `false` |
+| `barcodes` | Path to barcode/sample info file | `"barcodes.txt"` |
+| `fastq_dir` | Path to directory of FASTQ files | `""` |
+| `regions_bed` | BED file of region coordinates | `ReferenceSequences/SIVregions_wBarcode.bed` |
+| `reference` | Full genome reference FASTA | `ReferenceSequences/SIVMac239FullGenome_wBarcode.fas` |
+| `outdir` | Output directory | `nf-results/` |
+| `virus` | Virus name, affects trimming logic | `"SIV"` |
+| `min_read_length` | Minimum read length to retain | `-1` (auto) |
+| `max_read_length` | Maximum read length to retain | `-1` (auto) |
+| `count_barcodes` | Enable barcode count logic | `false` |
+| `gpu` | Use GPU for Medaka polishing | `false` |
 
 ---
 
@@ -94,11 +94,22 @@ Defined at the top of the Nextflow script or passed via `-params-file`.
 
 ### Basic Run
 
+#### Run directly from github
+
+```bash
+nextflow rlr-lab/haplotypes_workflow \
+  --fastq_dir /path/to/fastqs \
+  --barcodes barcodes.txt \
+  -work-dir /path/for/work
+```
+
+#### If the pipeline is downloaded locally
+
 ```bash
 nextflow run main.nf \
   --fastq_dir /path/to/fastqs \
   --barcodes barcodes.txt \
-  --gpu true
+  -work-dir /path/for/work
 ```
 
 ### Using a Parameters File
@@ -137,6 +148,8 @@ nf-results/
           ├── *_consensus_trimmed.fasta
           ├── read_counts.txt
 ```
+
+There will also be a HTML report generated in the directory the pipeline is launched from. This report contains metrics about workflow execution and contains three main sections: `Summary`, `Resources`, and `Tasks`.
 
 ---
 
