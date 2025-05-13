@@ -71,8 +71,6 @@ process qualityFilter {
     cpus = 1
     time = { 120.minute * task.attempt}
     memory = { 4.GB * task.attempt}
-    errorStrategy 'retry'
-    maxRetries 2
 
     input:
     tuple val(barcode), val(sample_id), val(fragments), path(concat_fastq)
@@ -131,8 +129,6 @@ process flyeAssembly {
     cpus = 2
     time = { 20.minute * task.attempt}
     memory = { 8.GB * task.attempt}
-    errorStrategy 'retry'
-    maxRetries 2
 
     input:
     tuple val(barcode), val(sample_id), val(fragments), path(filtered_fastq)
@@ -183,8 +179,6 @@ process cleanContigs {
     cpus = 1
     time = { 5.minute * task.attempt}
     memory = { 8.GB * task.attempt}
-    errorStrategy 'retry'
-    maxRetries 2
 
     input:
     tuple val(barcode), val(sample_id), val(fragments), path(assembly_fasta)
@@ -229,8 +223,6 @@ process polishAssembly {
     cpus = 1
     time = { 30.minute * task.attempt}
     memory = { 16.GB * task.attempt}
-    errorStrategy 'retry'
-    maxRetries 2
 
     input:
     tuple val(barcode), val(sample_id), val(fragments), path(assembly_fasta), path(filtered_fastq)
@@ -265,8 +257,6 @@ process alignReads {
     cpus = 2
     time = { 10.minute * task.attempt}
     memory = { 16.GB * task.attempt}
-    errorStrategy 'retry'
-    maxRetries 2
 
     input:
     tuple val(barcode), val(sample_id), val(fragments), path(consensus_fasta), path(filtered_fastq)
@@ -298,8 +288,6 @@ process trimConsensus {
     cpus = 1
     time = { 5.minute * task.attempt}
     memory = { 8.GB * task.attempt}
-    errorStrategy 'retry'
-    maxRetries 2
 
     input:
     tuple val(barcode), val(sample_id), val(fragments), path(consensus_fasta), path(aligned_bam), path(aligned_bai)
@@ -379,8 +367,6 @@ process haplotypes {
     cpus = 2
     time = { 10.minute * task.attempt}
     memory = { 16.GB * task.attempt}
-    errorStrategy 'retry'
-    maxRetries 2
 
     input:
     tuple val(barcode), val(sample_id), val(fragments), path(trimmed_fasta), path(aligned_bam), path(aligned_bai)
@@ -412,8 +398,6 @@ process countBarcodes {
     cpus = 2
     time = { 8.minute * task.attempt}
     memory = { 8.GB * task.attempt}
-    errorStrategy 'retry'
-    maxRetries 2
 
     input:
     tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_filtered.fastq.gz")
@@ -452,8 +436,6 @@ process RVHaplo {
     cpus = 2
     time = { 120.minute * task.attempt}
     memory = { 32.GB * task.attempt}
-    errorStrategy 'ignore'
-    maxRetries 2
 
     input:
     tuple val(barcode), val(sample_id), val(fragments), path(trimmed_fasta), path(aligned_bam), path(aligned_bai)
