@@ -113,7 +113,11 @@ def unique_reads(clu):
 
 def contig_weight(seqs,nod):
     l = len(seqs)
-    index = np.argsort(nod[:, 0])
+    print(nod)
+    if nod.ndim == 1:
+        index = np.argsort(nod[:])
+    else:
+        index = np.argsort(nod[:, 0])
     mat = np.zeros([l, l])
     for i in range(l - 1):
         index_i = index[i]
@@ -147,6 +151,8 @@ def hierarchical_weight(clus,seq_mat,snv_base,major_base,thres = 0.8,depth = 5):
     node_se = np.array(node_se)
     mat = contig_weight(seqs,node_se)
     mat = mat*(mat>=thres)
+    if len(mat) == 0:
+        mat = [0]
     return mat
 
 def hierarchical_clustering(clus,seq_mat,snv_base,major_base, thres = 0.8,depth = 5):

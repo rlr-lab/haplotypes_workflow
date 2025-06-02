@@ -17,19 +17,13 @@ params.rvhaplo         = false
 // 1. Concatenate FASTQ
 process concatenateFastq {
     
-    executor 'local'
-    // Conda not needed, but initialized now so that the next process doesn't time out while creating environment
-    conda "${workflow.projectDir}/conda/medaka.yaml"
-    errorStrategy 'retry'
-    maxRetries 2
-
     input:
     tuple val(barcode), val(sample_id)
 
     output:
     tuple val(barcode), val(sample_id), path("${sample_id}_concatenated.fastq.gz")
 
-    shell:
+    script:
     """
     echo "Sample ${sample_id}:"
     # Create any missing directories
@@ -64,21 +58,13 @@ process concatenateFastq {
 // 2. Quality filter
 process qualityFilter {
 
-    executor 'slurm'
-    conda "${workflow.projectDir}/conda/medaka.yaml"
-    clusterOptions = '-A b1042'
-    queue = 'genomics'
-    cpus = 1
-    time = { 120.minute * task.attempt}
-    memory = { 4.GB * task.attempt}
-
     input:
     tuple val(barcode), val(sample_id), val(fragments), path(concat_fastq)
 
     output:
     tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_filtered.fastq.gz")
 
-    shell:
+    script:
     """
     # Split processing by fragment
     echo "Sample ${sample_id}, ${fragments}:"
@@ -122,21 +108,13 @@ process qualityFilter {
 // 3. Flye assembly
 process flyeAssembly {
 
-    executor 'slurm'
-    conda "${workflow.projectDir}/conda/medaka.yaml"
-    clusterOptions = '-A b1042'
-    queue = 'genomics'
-    cpus = 2
-    time = { 20.minute * task.attempt}
-    memory = { 8.GB * task.attempt}
-
     input:
     tuple val(barcode), val(sample_id), val(fragments), path(filtered_fastq)
 
     output:
     tuple val(barcode), val(sample_id), val(fragments), path("flye_out/assembly.fasta")
     
-    shell:
+    script:
     """
     echo "Sample ${sample_id}, ${fragments}:"
 
@@ -172,21 +150,13 @@ process flyeAssembly {
 // 4. Clean and reorder contigs
 process cleanContigs {
 
-    executor 'slurm'
-    conda "${workflow.projectDir}/conda/medaka.yaml"
-    clusterOptions = '-A b1042'
-    queue = 'genomics'
-    cpus = 1
-    time = { 5.minute * task.attempt}
-    memory = { 8.GB * task.attempt}
-
     input:
     tuple val(barcode), val(sample_id), val(fragments), path(assembly_fasta)
 
     output:
     tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_assembly.fasta")
     
-    shell:
+    script:
     """
     echo "Sample ${sample_id}, ${fragments}:"
 
@@ -209,28 +179,13 @@ process cleanContigs {
 //5. Polish Assembly
 process polishAssembly {
 
-    executor 'slurm'
-    if(params.gpu) {
-        conda "${workflow.projectDir}/conda/medaka.yaml"
-        clusterOptions = '-A b1042 --gres=gpu:a100:1'
-        queue = 'genomics-gpu'
-    }
-    else {
-        conda "${workflow.projectDir}/conda/medaka.yaml"
-        clusterOptions = '-A b1042'
-        queue = 'genomics'
-    }
-    cpus = 1
-    time = { 30.minute * task.attempt}
-    memory = { 16.GB * task.attempt}
-
     input:
     tuple val(barcode), val(sample_id), val(fragments), path(assembly_fasta), path(filtered_fastq)
 
     output:
     tuple val(barcode), val(sample_id), val(fragments), path("medaka_out/consensus.fasta")
 
-    shell:
+    script:
     """
     echo "Sample ${sample_id}, ${fragments}:"
 
@@ -250,21 +205,13 @@ process polishAssembly {
 // 6. Align reads back
 process alignReads {
 
-    executor 'slurm'
-    conda "${workflow.projectDir}/conda/medaka.yaml"
-    clusterOptions = '-A b1042'
-    queue = 'genomics'
-    cpus = 2
-    time = { 10.minute * task.attempt}
-    memory = { 16.GB * task.attempt}
-
     input:
     tuple val(barcode), val(sample_id), val(fragments), path(consensus_fasta), path(filtered_fastq)
 
     output:
     tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai")
 
-    shell:
+    script:
     """
     echo "Sample ${sample_id}, ${fragments}:"
     
@@ -281,21 +228,13 @@ process alignReads {
 // 7. Trim consensus by depth
 process trimConsensus {
 
-    executor 'slurm'
-    conda "${workflow.projectDir}/conda/medaka.yaml"
-    clusterOptions = '-A b1042'
-    queue = 'genomics'
-    cpus = 1
-    time = { 5.minute * task.attempt}
-    memory = { 8.GB * task.attempt}
-
     input:
     tuple val(barcode), val(sample_id), val(fragments), path(consensus_fasta), path(aligned_bam), path(aligned_bai)
 
     output:
     tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_consensus_trimmed.fasta"), path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai")
     
-    shell:
+    script:
     """
     echo "Sample ${sample_id}, ${fragments}:"
 
@@ -360,21 +299,13 @@ process trimConsensus {
 // 8. Haplotype counting
 process haplotypes {
 
-    executor 'slurm'
-    conda "${workflow.projectDir}/conda/medaka.yaml"
-    clusterOptions = '-A b1042'
-    queue = 'genomics'
-    cpus = 2
-    time = { 10.minute * task.attempt}
-    memory = { 16.GB * task.attempt}
-
     input:
     tuple val(barcode), val(sample_id), val(fragments), path(trimmed_fasta), path(aligned_bam), path(aligned_bai)
 
     output:
     tuple val(barcode), val(sample_id), val(fragments), path("read_counts.txt")
 
-    shell:
+    script:
     """
     echo "Sample ${sample_id}, ${fragments}:"
         
@@ -391,18 +322,10 @@ process haplotypes {
 
 process countBarcodes {
 
-    executor 'slurm'
-    conda "${workflow.projectDir}/conda/medaka.yaml"
-    clusterOptions = '-A b1042'
-    queue = 'genomics'
-    cpus = 2
-    time = { 8.minute * task.attempt}
-    memory = { 8.GB * task.attempt}
-
     input:
     tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_filtered.fastq.gz")
 
-    shell:
+    script:
     """
 
     if [ ! -d "${params.outdir}/${sample_id}/barcode/" ]; then
@@ -422,25 +345,10 @@ process countBarcodes {
 
 process RVHaplo {
 
-    executor 'slurm'
-    if(params.gpu) {
-        conda "${workflow.projectDir}/conda/medaka.yaml"
-        clusterOptions = '-A b1042 --gres=gpu:a100:1'
-        queue = 'genomics-gpu'
-    }
-    else {
-        conda "${workflow.projectDir}/conda/medaka.yaml"
-        clusterOptions = '-A b1042'
-        queue = 'genomics'
-    }
-    cpus = 2
-    time = { 120.minute * task.attempt}
-    memory = { 32.GB * task.attempt}
-
     input:
     tuple val(barcode), val(sample_id), val(fragments), path(trimmed_fasta), path(aligned_bam), path(aligned_bai)
 
-    shell:
+    script:
     """
     # Run RVHaplo
 
@@ -487,7 +395,7 @@ workflow {
     // Combine with concatenated file
     quality_input = fragmented_ch
         .combine(concatenated, by: 1)
-        .map { sample, barcode, fragment, barcode1, concat ->
+        .map { sample, barcode, fragment, _barcode1, concat ->
             tuple(barcode, sample, fragment, concat)
         }
 
@@ -499,30 +407,30 @@ workflow {
     // Join cleaned and quality for polishing
     polish_input = cleaned
         .join(quality, by: [1, 1])
-        .map { sample, barcode, fragments, assembly, barcode1, fragments1, filtered -> 
+        .map { sample, barcode, fragments, assembly, _barcode1, _fragments1, filtered -> 
             tuple(barcode, sample, fragments, assembly, filtered)}
     polished = polishAssembly(polish_input)
 
     // Join polished and quality for alignment
     align_input = polished
         .join(quality, by: [1, 1])
-        .map { sample, barcode, fragments, consensus, barcode1, fragments1, filtered -> 
+        .map { sample, barcode, fragments, consensus, _barcode1, _fragments1, filtered -> 
             tuple(barcode, sample, fragments, consensus, filtered)}
     aligned = alignReads(align_input)
 
     // Join polished and aligned for trimming
     trim_input = polished
         .join(aligned, by: [1, 1])
-        .map { sample, barcode, fragments, consensus, barcode1, fragments1, bam, bai -> 
+        .map { sample, barcode, fragments, consensus, _barcode1, _fragments1, bam, bai -> 
             tuple(barcode, sample, fragments, consensus, bam, bai)}
     trimmed = trimConsensus(trim_input)
 
     // Haplotyping
     if ( params.rvhaplo ) {
-        rvhaplo = RVHaplo(trimmed)
+        RVHaplo(trimmed)
     }
     else {
-        haplo = haplotypes(trimmed)
+        haplotypes(trimmed)
     }
 
     // Optional process to split/count barcoded fragments
@@ -532,7 +440,7 @@ workflow {
 
         // Filter input for barcoded samples, join with quality output
         barcoded_ch = quality
-            .filter { barcode, sample_id, fragments, path -> fragments != null && barcoded_regions.any { fragments.contains(it) }}
+            .filter { _barcode, _sample_id, fragments, _path -> fragments != null && barcoded_regions.any { fragments.contains(it) }}
         
         countBarcodes(barcoded_ch)
     }
