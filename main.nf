@@ -1,19 +1,6 @@
 #!/usr/bin/env nextflow
 nextflow.enable.dsl=2
 
-// General parameters
-params.barcodes        = "barcodes.txt"
-params.fastq_dir       = ""
-params.regions_bed     = "${workflow.projectDir}/ReferenceSequences/SIVregions_wBarcode.bed"
-params.reference       = "${workflow.projectDir}/ReferenceSequences/SIVMac239FullGenome_wBarcode.fas"
-params.outdir          = "${workflow.projectDir}/nf-results"
-params.virus           = "SIV"
-params.min_read_length = -1
-params.max_read_length = -1
-params.count_barcodes  = false
-params.gpu             = false
-params.rvhaplo         = false
-
 // 1. Concatenate FASTQ
 process concatenateFastq {
     
