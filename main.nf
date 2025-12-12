@@ -299,9 +299,9 @@ process haplotypes {
     # Count each 'haplotype'
     python "${workflow.projectDir}/scripts/contig_read_counter.py" "${sample_id}_aligned.bam" \
         --output-bam "${sample_id}_filtered.bam" \
-        --min-mapping-quality 15
+        --min-mapping-quality 0
 
-    cp -f "read_counts.txt" "${params.outdir}/${sample_id}/${fragments}/"
+    cp -f "read_counts.txt" "${params.outdir}/${sample_id}/${fragments}/${sample_id}_read_counts.txt"
 
     """
 
