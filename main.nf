@@ -35,6 +35,7 @@ process concatenateFastq {
     cp -f "${sample_id}_concatenated.fastq.gz" "${params.outdir}/${sample_id}/"
 
     if [ ! -f "${params.outdir}/${sample_id}/${sample_id}_concatenated.fastq.gz" ]; then
+        echo "Concatenating file failed"
         exit 1
     fi
 
@@ -46,29 +47,28 @@ process concatenateFastq {
 process qualityFilter {
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments), path(concat_fastq)
+    tuple val(barcode), val(sample_id), path(concat_fastq)
 
     output:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_filtered.fastq.gz")
+    tuple val(barcode), val(sample_id), path("${sample_id}_filtered.fastq.gz")
 
     script:
     """
-    # Split processing by fragment
-    echo "Sample ${sample_id}, ${fragments}:"
 
-    # Create a file for each fragment
-    mkdir -p "${params.outdir}/${sample_id}/${fragments}"
-    length=\$(awk -v pat=${fragments} '\$4 == pat {print \$3 - \$2}' "${params.regions_bed}")
+    echo "Sample ${sample_id}"
+
+    # Create a file sample
+    mkdir -p "${params.outdir}/${sample_id}"
 
     if [ ${params.min_read_length} -gt -1 ]; then
         min_read=${params.min_read_length}
     else
-        min_read=\$((\${length} - 100))
+        min_read=1200
     fi
     if [ ${params.max_read_length} -gt -1 ]; then
         max_read=${params.max_read_length}
     else
-        max_read=\$((\${length} + 100))
+        max_read=20000
     fi
 
     fastplong \
@@ -77,42 +77,41 @@ process qualityFilter {
         --qualified_quality_phred 15 \
         --length_required \$min_read \
         --length_limit \$max_read \
-        --adapter_fasta "${workflow.projectDir}/ReferenceSequences/SIVprimers.fasta" \
         --thread 4 \
         --html "${sample_id}_fastp_report.html" \
         --json "${sample_id}_fastp_report.json"
         
     echo "Finished filtering"
     echo "Moving files..."
-    mkdir -p "${params.outdir}/${sample_id}/${fragments}/fastplong"
-    cp -f "${sample_id}_filtered.fastq.gz" "${params.outdir}/${sample_id}/${fragments}/fastplong/"
-    cp -f "${sample_id}_fastp_report.html" "${params.outdir}/${sample_id}/${fragments}/fastplong/"
-    cp -f "${sample_id}_fastp_report.json" "${params.outdir}/${sample_id}/${fragments}/fastplong/"
+    mkdir -p "${params.outdir}/${sample_id}/fastplong"
+    cp -f "${sample_id}_filtered.fastq.gz" "${params.outdir}/${sample_id}/fastplong/"
+    cp -f "${sample_id}_fastp_report.html" "${params.outdir}/${sample_id}/fastplong/"
+    cp -f "${sample_id}_fastp_report.json" "${params.outdir}/${sample_id}/fastplong/"
 
     """
 }
 
+// ----------------------------------------------
+// -------------- De Novo -----------------------
+// ----------------------------------------------
 // 3. Flye assembly
 process flyeAssembly {
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments), path(filtered_fastq)
+    tuple val(barcode), val(sample_id), path(filtered_fastq)
 
     output:
-    tuple val(barcode), val(sample_id), val(fragments), path("flye_out/assembly.fasta")
+    tuple val(barcode), val(sample_id), path("flye_out/assembly.fasta")
     
     script:
     """
-    echo "Sample ${sample_id}, ${fragments}:"
-
-    length=\$(awk -v pat=${fragments} '\$4 == pat {print \$3 - \$2}' "${params.regions_bed}")
+    echo "Sample ${sample_id}:"
 
     # Try to use assembly
     run_flye () {
         flye \
             --nano-raw "${sample_id}_filtered.fastq.gz" \
             --out-dir flye_out \
-            --genome-size \${length} \
             --min-overlap 1000 \
             --asm-coverage 50 \
             --iterations 5 \
@@ -128,232 +127,140 @@ process flyeAssembly {
         cat ${params.reference} > flye_out/assembly.fasta
     fi
 
-    cp -rf flye_out/ "${params.outdir}/${sample_id}/${fragments}"
+    cp -rf flye_out/ "${params.outdir}/${sample_id}/"
 
     """
 
 }
 
-// 4. Clean and reorder contigs
-process cleanContigs {
-
-    input:
-    tuple val(barcode), val(sample_id), val(fragments), path(assembly_fasta)
-
-    output:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_assembly.fasta")
-    
-    script:
-    """
-    echo "Sample ${sample_id}, ${fragments}:"
-
-    # Split reference into separate contigs
-    seqtk subseq ${params.reference} ${params.regions_bed} > reference_contigs.fasta
-    python ${workflow.projectDir}/scripts/rename_contigs.py -i reference_contigs.fasta -o renamed_contigs.fasta -b ${params.regions_bed}
-    
-    echo ${fragments} > frags.txt
-    seqtk subseq renamed_contigs.fasta frags.txt > ref.fasta
-    python "${workflow.projectDir}/scripts/reorder_contigs.py" \
-        -r ref.fasta \
-        -a "assembly.fasta" \
-        -o "${sample_id}_assembly.fasta" \
-        --concat
-    cp -f "${sample_id}_assembly.fasta" "${params.outdir}/${sample_id}/${fragments}/"
-
-    """
-}
-
-//5. Polish Assembly
+//4. Polish Assembly
 process polishAssembly {
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments), path(assembly_fasta), path(filtered_fastq)
+    tuple val(barcode), val(sample_id), path(assembly_fasta), path(filtered_fastq)
 
     output:
-    tuple val(barcode), val(sample_id), val(fragments), path("medaka_out/consensus.fasta")
+    tuple val(barcode), val(sample_id), path("medaka_out/consensus.fasta")
 
     script:
     """
-    echo "Sample ${sample_id}, ${fragments}:"
+    echo "Sample ${sample_id}:"
 
     medaka_consensus \
-        -i "${sample_id}_filtered.fastq.gz" \
-        -d "${sample_id}_assembly.fasta" \
+        -i "${filtered_fastq}" \
+        -d "${assembly_fasta}" \
         -m r1041_e82_400bps_sup_v5.0.0 \
         -o medaka_out \
         -t 8 \
         -f -x
-    cp -f medaka_out/consensus.fasta "${params.outdir}/${sample_id}/${fragments}/${sample_id}_consensus.fasta"
+    cp -f medaka_out/consensus.fasta "${params.outdir}/${sample_id}/${sample_id}_consensus.fasta"
 
     """
 
 }
 
-// 6. Align reads back
+// 5. Align reads back
 process alignReads {
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments), path(consensus_fasta), path(filtered_fastq)
+    tuple val(barcode), val(sample_id), path(consensus_fasta), path(filtered_fastq)
 
     output:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai")
+    tuple val(barcode), val(sample_id), path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai")
 
     script:
     """
-    echo "Sample ${sample_id}, ${fragments}:"
+    echo "Sample ${sample_id}:"
     
     minimap2 -ax lr:hq "consensus.fasta" "${sample_id}_filtered.fastq.gz" | \
         samtools sort -o "${sample_id}_aligned.bam"
     samtools index "${sample_id}_aligned.bam"
-    cp -f "${sample_id}_aligned.bam" "${params.outdir}/${sample_id}/${fragments}/"
-    cp -f "${sample_id}_aligned.bam.bai" "${params.outdir}/${sample_id}/${fragments}/"
+    cp -f "${sample_id}_aligned.bam" "${params.outdir}/${sample_id}/"
+    cp -f "${sample_id}_aligned.bam.bai" "${params.outdir}/${sample_id}/"
 
     """
 
 }
 
-// 7. Trim consensus by depth
-process trimConsensus {
+// ---------------------------------------------------
+// ---------------- Reference-based ------------------
+// ---------------------------------------------------
 
+// 3. First Alignment
+process firstAlignment {
+    
     input:
-    tuple val(barcode), val(sample_id), val(fragments), path(consensus_fasta), path(aligned_bam), path(aligned_bai)
+    tuple val(barcode), val(sample_id), path(filtered_fastq)
 
     output:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_consensus_trimmed.fasta"), path("${sample_id}_aligned.bam"), path("${sample_id}_aligned.bam.bai")
-    
+    tuple val(barcode), val(sample_id), path("${sample_id}_aligned.bam")
+
     script:
     """
-    echo "Sample ${sample_id}, ${fragments}:"
+    echo "Sample ${sample_id}:"
 
-    # Drop shortest 10% of aligned reads
-    python "${workflow.projectDir}/scripts/filter_by_aligned_length.py" \
-        "${sample_id}_aligned.bam" \
-        length_filtered.bam
-    samtools sort length_filtered.bam > length_filtered_sorted.bam
-    samtools index length_filtered_sorted.bam
-
-    depth=\$(samtools depth length_filtered_sorted.bam | awk '{sum+=\$3} END {print (sum/NR)*0.9}')
-    echo "Trimming to a minimum depth of \${depth}"
-
-    # Trim contig to remove bases on ends with low coverage
-    python "${workflow.projectDir}/scripts/trim_contigs_by_depth.py" \
-        -f "consensus.fasta" \
-        -b length_filtered_sorted.bam \
-        -o "${sample_id}_consensus_trimmed.fasta" \
-        -d \${depth}
-
-    # Split SIV Fragment_3 into 2 sequences around barcode
-    if [ ${params.virus} == "SIV" ] && [ ${fragments} == "Fragment_3" ]; then
-        splitFasta() {
-            python "${workflow.projectDir}/scripts/split_fasta_by_delimiter.py" \
-                -i "${sample_id}_consensus_trimmed.fasta" \
-                -d "acgcgagccatgnnnnnnnnnncgatgcgcgcgt" \
-                -o "${sample_id}_consensus_split.fasta"
-        }
-        if splitFasta && [ -f "${sample_id}_consensus_split.fasta" ]; then
-            echo "Contig split by delimiter"
-            echo "Further processing done over two contigs"
-            rm "${sample_id}_consensus_trimmed.fasta"
-            mv "${sample_id}_consensus_split.fasta" "${sample_id}_consensus_trimmed.fasta"
-        else
-            echo "Delimiter could not be found"
-            echo "Assembly kept as one contig"
-        fi
-    fi
-
-    # Rename consensus sequence in fasta
-    cp "${sample_id}_consensus_trimmed.fasta" temp_rename.fasta
-    python "${workflow.projectDir}/scripts/fastaRegexRemove.py" \
-        -i temp_rename.fasta \
-        -r "assembled_sequence" \
-        -n "${fragments}" \
-        -o "${sample_id}_consensus_trimmed.fasta"
-
-    cp -f "${sample_id}_consensus_trimmed.fasta" "${params.outdir}/${sample_id}/${fragments}/"
-
-    echo "Realigning..."
-    minimap2 -ax lr:hq "${sample_id}_consensus_trimmed.fasta" "${params.outdir}/${sample_id}/${fragments}/fastplong/${sample_id}_filtered.fastq.gz" > aligned.sam
-    samtools view -bSh -F 4 aligned.sam > aligned.bam
-    samtools sort -o "${sample_id}_aligned.bam" aligned.bam
-    samtools index "${sample_id}_aligned.bam"
-    cp -f "${sample_id}_aligned.bam" "${params.outdir}/${sample_id}/${fragments}/"
-    cp -f "${sample_id}_aligned.bam.bai" "${params.outdir}/${sample_id}/${fragments}/"
-
+    minimap2 -ax lr:hq "${params.reference}" "${sample_id}_filtered.fastq.gz" > aligned.sam
+    samtools view -bS -F 0x904 -h aligned.sam > aligned.bam
+    samtools sort aligned.bam > "${sample_id}_aligned.bam"
     """
-
 }
 
-// 8. Haplotype counting
-process haplotypes {
+// 4. First Consensus
+process firstConsensus {
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments), path(trimmed_fasta), path(aligned_bam), path(aligned_bai)
+    tuple val(barcode), val(sample_id), path(aligned_bam)
 
     output:
-    tuple val(barcode), val(sample_id), val(fragments), path("read_counts.txt")
+    tuple val(barcode), val(sample_id), path("${sample_id}_con1.fa")
 
     script:
     """
-    echo "Sample ${sample_id}, ${fragments}:"
-        
-    # Count each 'haplotype'
-    python "${workflow.projectDir}/scripts/contig_read_counter.py" "${sample_id}_aligned.bam" \
-        --output-bam "${sample_id}_filtered.bam" \
-        --min-mapping-quality 0
-
-    cp -f "read_counts.txt" "${params.outdir}/${sample_id}/${fragments}/${sample_id}_read_counts.txt"
-
+    samtools mpileup -aa -A -Q 0 ${aligned_bam} | ivar consensus -p "${sample_id}_con1" -q 10 -m 100 -k
     """
-
 }
 
-process countBarcodes {
+// 5. Realign
+process realign {
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments), path("${sample_id}_filtered.fastq.gz")
+    tuple val(barcode), val(sample_id), path(firstCon), path(filtered_fastq)
+
+    output:
+    tuple val(barcode), val(sample_id), path("${sample_id}.bam")
 
     script:
     """
+    minimap2 -ax lr:hq "${firstCon}" "${filtered_fastq}" > aligned.sam
+    samtools view -bS -F 4 -h aligned.sam > aligned.bam
+    samtools sort aligned.bam > "${sample_id}.bam"
+    samtools index "${sample_id}.bam"
 
-    if [ ! -d "${params.outdir}/${sample_id}/barcode/" ]; then
-        mkdir "${params.outdir}/${sample_id}/barcode/"
-    fi
-
-    minimap2 -ax lr:hq "${workflow.projectDir}/ReferenceSequences/barcode_reference.fas" "${sample_id}_filtered.fastq.gz" > "${sample_id}_barcode.sam"
-    samtools view -F 4 -bS -h -O BAM -e 'rlen>233' "${sample_id}_barcode.sam" > "${sample_id}_barcode.bam"
-    samtools sort "${sample_id}_barcode.bam" > "${sample_id}_barcode_sorted.bam"; samtools index "${sample_id}_barcode_sorted.bam"
-    samtools depth -a -r "barcode" -@ 4 "${sample_id}_barcode_sorted.bam" > "${params.outdir}/${sample_id}/barcode/barcode_depth.txt"
-    perl "${workflow.projectDir}/scripts/bam_barcode_count.pl" -b "${sample_id}_barcode_sorted.bam" -s 113 -e 122 > "${params.outdir}/${sample_id}/barcode/barcodes.txt"
-    cp -f "${sample_id}_barcode_sorted.bam" "${params.outdir}/${sample_id}/barcode/${sample_id}_barcode_sorted.bam"
-    cp -f "${sample_id}_barcode_sorted.bam.bai" "${params.outdir}/${sample_id}/barcode/${sample_id}_barcode_sorted.bam.bai"
-
+    cp -f "${sample_id}.bam" "${params.outdir}/${sample_id}/"
+    cp -f "${sample_id}.bam.bai" "${params.outdir}/${sample_id}/"
     """
 }
 
-process RVHaplo {
+// 6. Final consensus
+process finalConsensus {
 
     input:
-    tuple val(barcode), val(sample_id), val(fragments), path(trimmed_fasta), path(aligned_bam), path(aligned_bai)
+    tuple val(barcode), val(sample_id), path(aligned_bam)
+
+    output:
+    tuple val(barcode), val(sample_id), path("${sample_id}_consensus.fa")
 
     script:
     """
-    # Run RVHaplo
+    samtools mpileup -aa -A -Q 0 "${aligned_bam}" | ivar consensus -p "${sample_id}_consensus" -q 10 -t 0.5 -n N
 
-    echo "Sample ${sample_id}, ${fragments}:"
- 
-    RVHaploPath=${workflow.projectDir}"/scripts/rvhaplo.sh"
- 
-    "\${RVHaploPath}" \
-        -i "${sample_id}_aligned.bam" \
-        -r "${sample_id}_consensus_trimmed.fasta" \
-        -o ${params.outdir}/${sample_id}/${fragments} \
-        -p ${sample_id} \
-        -t 8 -e 0.1 -sg 10 -a 0.001 -ss 5
-    
-    echo "Done"
+    cp -f "${sample_id}"_consensus.* "${params.outdir}/${sample_id}/"
     """
-
 }
+
+//-------------------------------------------------
+// ------------------- Workflow -------------------
+// ------------------------------------------------
 
 workflow {
     
@@ -366,69 +273,43 @@ workflow {
     
     // Concatenate fastq once per sample
     concatenated = concatenateFastq(samples_ch)
+    // Quality filter
+    quality = qualityFilter(concatenated)
 
-    // Split to flatmap of fragments
-    Channel
-        .fromPath(params.barcodes, checkIfExists: true, type: 'file')
-        .splitCsv(header:false)
-        .flatMap { row ->
-            def barcode = row[0]
-            def sample_id = row[1]
-            def fragments = row[2].tokenize(' ')
-            fragments.collect { fragment -> tuple(barcode, sample_id, fragment) }
-        }
-        .set { fragmented_ch }
-    
-    // Combine with concatenated file
-    quality_input = fragmented_ch
-        .combine(concatenated, by: 1)
-        .map { sample, barcode, fragment, _barcode1, concat ->
-            tuple(barcode, sample, fragment, concat)
-        }
-
-    // Continue with workflow
-    quality = qualityFilter(quality_input)
-    assembled = flyeAssembly(quality)
-    cleaned = cleanContigs(assembled)
-
-    // Join cleaned and quality for polishing
-    polish_input = cleaned
-        .join(quality, by: [1, 1])
-        .map { sample, barcode, fragments, assembly, _barcode1, _fragments1, filtered -> 
-            tuple(barcode, sample, fragments, assembly, filtered)}
-    polished = polishAssembly(polish_input)
-
-    // Join polished and quality for alignment
-    align_input = polished
-        .join(quality, by: [1, 1])
-        .map { sample, barcode, fragments, consensus, _barcode1, _fragments1, filtered -> 
-            tuple(barcode, sample, fragments, consensus, filtered)}
-    aligned = alignReads(align_input)
-
-    // Join polished and aligned for trimming
-    trim_input = polished
-        .join(aligned, by: [1, 1])
-        .map { sample, barcode, fragments, consensus, _barcode1, _fragments1, bam, bai -> 
-            tuple(barcode, sample, fragments, consensus, bam, bai)}
-    trimmed = trimConsensus(trim_input)
-
-    // Haplotyping
-    if ( params.rvhaplo ) {
-        RVHaplo(trimmed)
+    // Force denovo if no reference given
+    if ( params.reference == null || params.reference == "" ) {
+        params.denovo = true
     }
+
+    // Denovo Assembly
+    if ( params.denovo ) {
+        assembled = flyeAssembly(quality)
+
+        // Join cleaned and quality for polishing
+        polish_input = assembled
+            .join(quality, by: [1, 1])
+            .map { sample, barcode, assembly, _barcode1, filtered -> 
+                tuple(barcode, sample, assembly, filtered)}
+        polished = polishAssembly(polish_input)
+
+        // Join polished and quality for alignment
+        align_input = polished
+            .join(quality, by: [1, 1])
+            .map { sample, barcode, consensus, _barcode1, filtered -> 
+                tuple(barcode, sample, consensus, filtered)}
+        aligned = alignReads(align_input)
+    }
+    // Reference-guided Assembly
     else {
-        haplotypes(trimmed)
+        align1 = firstAlignment(quality)
+        con1 = firstConsensus(align1)
+
+        realign_input = con1
+            .join(quality, by: [1, 1])
+            .map { sample, barcode, consensus, _barcode1, filtered ->
+                tuple(barcode, sample, consensus, filtered)}
+        realigned = realign(realign_input)
+        conf = finalConsensus(realigned)
     }
 
-    // Optional process to split/count barcoded fragments
-    if (params.count_barcodes) {
-        // What fragments contain a barcode
-        def barcoded_regions = ["Fragment_3", "FL"]
-
-        // Filter input for barcoded samples, join with quality output
-        barcoded_ch = quality
-            .filter { _barcode, _sample_id, fragments, _path -> fragments != null && barcoded_regions.any { fragments.contains(it) }}
-        
-        countBarcodes(barcoded_ch)
-    }
 }
