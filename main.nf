@@ -2,10 +2,6 @@
 nextflow.enable.dsl=2
 
 // 1. Concatenate FASTQ
-#!/usr/bin/env nextflow
-nextflow.enable.dsl=2
-
-// 1. Concatenate FASTQ
 process concatenateFastq {
     
     
@@ -14,38 +10,21 @@ process concatenateFastq {
 
     output:
     tuple val(barcode), val(sample_id), path("${sample_id}_concatenated.fastq.gz")
-    tuple val(barcode), val(sample_id), path("${sample_id}_concatenated.fastq.gz")
 
-    script:
     script:
     """
     echo "Sample ${sample_id}:"
-    # Create any missing directories
-    if [ ! -d "${params.outdir}" ]; then
-        mkdir "${params.outdir}"
-    echo "Sample ${sample_id}:"
-    # Create any missing directories
-    if [ ! -d "${params.outdir}" ]; then
-        mkdir "${params.outdir}"
-    fi
-    if [ ! -d "${params.outdir}/${sample_id}" ]; then
-        mkdir "${params.outdir}/${sample_id}"
-    elif [ -d "${params.outdir}/${sample_id}" ]; then
-        rm -rf "${params.outdir}/${sample_id}"
-        mkdir "${params.outdir}/${sample_id}"
-    if [ ! -d "${params.outdir}/${sample_id}" ]; then
-        mkdir "${params.outdir}/${sample_id}"
-    elif [ -d "${params.outdir}/${sample_id}" ]; then
-        rm -rf "${params.outdir}/${sample_id}"
-        mkdir "${params.outdir}/${sample_id}"
-    fi
 
-    # Either concatenate all fastqs in a folder or just take the one
-    if [ -d "${params.fastq_dir}/${barcode}" ]; then
-        echo "Concatenating fastq files..."
-        cat ${params.fastq_dir}/${barcode}/*.fastq.gz > "${sample_id}_concatenated.fastq.gz"
-    elif [ -f "${params.fastq_dir}/${sample_id}.fastq.gz" ]; then
-        cat "${params.fastq_dir}/${sample_id}.fastq.gz" > "${sample_id}_concatenated.fastq.gz"
+    # Create any missing directories
+    if [ ! -d "${params.outdir}" ]; then
+        mkdir "${params.outdir}"
+    fi
+    if [ ! -d "${params.outdir}/${sample_id}" ]; then
+        mkdir "${params.outdir}/${sample_id}"
+    elif [ -d "${params.outdir}/${sample_id}" ]; then
+        rm -rf "${params.outdir}/${sample_id}"
+        mkdir "${params.outdir}/${sample_id}"
+    fi
 
     # Either concatenate all fastqs in a folder or just take the one
     if [ -d "${params.fastq_dir}/${barcode}" ]; then
