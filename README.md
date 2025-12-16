@@ -6,6 +6,25 @@ The pipeline is designed for HPC environments and is compatible with Singularity
 
 ---
 
+## Instructions for NU Quest
+
+Clone this repository:
+
+```{shell}
+git clone https://github.com/rlr-lab/nf_alignment.git
+```
+
+Make sure the necessary software is available:
+
+```{shell}
+module load nextflow
+module load singularity
+```
+
+Follow the instructions below to run the pipeline.
+
+---
+
 ## Overview
 
 For each sample, the pipeline performs:
