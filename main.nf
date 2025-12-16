@@ -151,7 +151,6 @@ process polishAssembly {
     medaka_consensus \
         -i "${filtered_fastq}" \
         -d "${assembly_fasta}" \
-        -m r1041_e82_400bps_sup_v5.0.0 \
         -o medaka_out \
         -t 8 \
         -f -x
