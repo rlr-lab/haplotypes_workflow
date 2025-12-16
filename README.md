@@ -17,8 +17,8 @@ git clone https://github.com/rlr-lab/nf_alignment.git
 Make sure the necessary software is available:
 
 ```{shell}
-module load nextflow
-module load singularity
+module load nextflow/25.04.0
+module load singularity/latest
 ```
 
 Follow the instructions below to run the pipeline.
