@@ -8,20 +8,29 @@ The pipeline is designed for HPC environments and is compatible with Singularity
 
 ## Instructions for NU Quest
 
-Clone this repository:
+1. Clone this repository:
 
 ```{shell}
 git clone https://github.com/rlr-lab/nf_alignment.git
 ```
 
-Make sure the necessary software is available:
+2. Make sure the necessary software is available:
 
 ```{shell}
 module load nextflow/25.04.0
 module load singularity/latest
 ```
 
-Follow the instructions below to run the pipeline.
+3. Make a barcode file (see below)
+
+4. Run the pipeline:
+
+```{shell}
+cd nf_alignment
+nextflow run main.nf --fastq_dir /path/to/fastqs --reference /path/to/nf_alignment/ReferenceSequences/SIVMac239FullGenome_wBarcode.fas
+```
+
+There are detailed instructions below!
 
 ---
 
